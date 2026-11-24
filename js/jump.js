@@ -9,68 +9,29 @@
 //      Distance = front-most toe at take-off to rear-most heel at landing, along the floor.
 //      Air time is also converted to a height (g·t²/8) as an independent cross-check.
 
+import { measure, median, StanceDetector } from './stance.js';
+
 export const G = 9.81;
-const EYE_HEIGHT_RATIO = 0.936; // eye height as a fraction of stature (standard anthropometry)
-const STILL_WINDOW_MS = 800;
 const MIN_FLIGHT_MS = 200; // shorter than this is a step or a running stride, not a jump
 const MAX_FLIGHT_MS = 2500;
-
-const median = (values) => {
-  const s = [...values].sort((a, b) => a - b);
-  const mid = s.length >> 1;
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
-const range = (values) => Math.max(...values) - Math.min(...values);
-const vis = (p) => p?.visibility ?? 1;
-
-/** Reduce one pose (pixel coordinates, y pointing down) to the few numbers the tracker needs. */
-function measure(px, world) {
-  if (!px) return null;
-  const hipsSeen = (vis(px[23]) + vis(px[24])) / 2 >= 0.5;
-  // Side-on (as for a long jump) the far leg is hidden behind the near one, so one clearly
-  // visible ankle is enough; the model still estimates where the hidden foot is.
-  const feetSeen = Math.max(vis(px[27]), vis(px[28])) >= 0.5;
-  const eyes = [px[2], px[5]].filter((p) => vis(p) >= 0.5);
-  if (!hipsSeen || !feetSeen || !eyes.length) return null;
-
-  const footL = Math.max(px[29].y, px[31].y);
-  const footR = Math.max(px[30].y, px[32].y);
-  const m = {
-    hipX: (px[23].x + px[24].x) / 2,
-    hipY: (px[23].y + px[24].y) / 2,
-    eyeY: eyes.reduce((s, p) => s + p.y, 0) / eyes.length,
-    lowestFoot: Math.max(footL, footR), // the foot nearest the floor
-    highestFoot: Math.min(footL, footR),
-    feetX: [px[29].x, px[30].x, px[31].x, px[32].x],
-    feet: [
-      { bottom: footL, xs: [px[29].x, px[31].x] },
-      { bottom: footR, xs: [px[30].x, px[32].x] },
-    ],
-    worldEyeToFloor: null,
-  };
-  if (world) {
-    const floor = Math.max(world[29].y, world[30].y, world[31].y, world[32].y);
-    m.worldEyeToFloor = floor - (world[2].y + world[5].y) / 2;
-  }
-  return m;
-}
 
 export class JumpTracker {
   /** @param {{heightM?: number|null}} options  heightM: the jumper's real height, for scale. */
   constructor({ heightM = null } = {}) {
     this.heightM = heightM;
+    this.stance = new StanceDetector({ heightM });
     this.reset();
   }
 
   setHeight(heightM) {
-    this.heightM = heightM || null;
+    this.heightM = this.stance.heightM = heightM || null;
     this.reset();
   }
 
   reset() {
     this.phase = 'searching'; // searching -> steady -> ready -> air -> ready ...
     this.cal = null;
-    this.window = [];
+    this.stance.clear();
     this.lastGround = null;
     this.prevGround = null;
     this.air = null;
@@ -93,7 +54,7 @@ export class JumpTracker {
     if (this.phase === 'air') return this.#inAir(t, m);
 
     if (!m) {
-      this.window = [];
+      this.stance.clear();
       this.phase = this.cal ? 'ready' : 'searching';
       return { phase: this.phase };
     }
@@ -113,26 +74,22 @@ export class JumpTracker {
         // Hip positions through the jump, for drawing its arc.
         path: [{ t: this.lastGround.t, x: this.lastGround.hipX, y: this.lastGround.hipY }, { t, x: m.hipX, y: m.hipY }],
       };
-      this.window = [];
+      this.stance.clear();
       this.phase = 'air';
       return { phase: this.phase, event: 'takeoff' };
     }
     this.prevGround = this.lastGround;
     this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY };
 
-    const straight = ['left_knee', 'right_knee', 'left_hip', 'right_hip'].every((k) => angles?.[k] == null || angles[k] >= 150);
-    this.window.push({ t, ...m, straight });
-    while (this.window.length && t - this.window[0].t > STILL_WINDOW_MS) this.window.shift();
-
     const wasReady = this.phase === 'ready';
-    if (this.#standingStill(t)) {
-      this.#calibrate();
+    const cal = this.stance.update(t, m, angles);
+    if (cal) {
+      // Clearance that counts as airborne: ~6 cm for an adult — off the floor, above landmark jitter.
+      this.cal = { ...cal, threshold: 0.035 * cal.bodyPx };
       this.phase = 'ready';
       if (!wasReady) return { phase: this.phase, event: 'calibrated' };
-    } else if (!this.cal) {
-      this.phase = 'steady';
     } else {
-      this.phase = 'ready';
+      this.phase = this.cal ? 'ready' : 'steady';
     }
     return { phase: this.phase };
   }
@@ -150,38 +107,6 @@ export class JumpTracker {
     const floor = this.cal.ground - this.cal.threshold;
     const planted = frame.feet.filter((f) => f.bottom >= floor);
     return (planted.length ? planted : frame.feet).flatMap((f) => f.xs);
-  }
-
-  #standingStill(t) {
-    const w = this.window;
-    if (w.length < 5 || t - w[0].t < STILL_WINDOW_MS * 0.85) return false;
-    const bodyPx = median(w.map((s) => s.lowestFoot - s.eyeY));
-    if (!(bodyPx > 0)) return false;
-    const tolerance = 0.02 * bodyPx;
-    return (
-      w.every((s) => s.straight) &&
-      range(w.map((s) => s.hipX)) < tolerance &&
-      range(w.map((s) => s.hipY)) < tolerance &&
-      range(w.map((s) => s.lowestFoot)) < tolerance
-    );
-  }
-
-  #calibrate() {
-    const w = this.window;
-    const ground = median(w.map((s) => s.lowestFoot));
-    const bodyPx = ground - median(w.map((s) => s.eyeY));
-    const worldEye = w.map((s) => s.worldEyeToFloor).filter((v) => v > 0);
-    // Without a real height, fall back to the model's own estimate of body size.
-    const eyeHeightM = this.heightM ? this.heightM * EYE_HEIGHT_RATIO : worldEye.length ? median(worldEye) : 1.7 * EYE_HEIGHT_RATIO;
-    this.cal = {
-      ground,
-      hipY: median(w.map((s) => s.hipY)),
-      hipX: median(w.map((s) => s.hipX)),
-      bodyPx,
-      scale: bodyPx / eyeHeightM, // pixels per metre
-      threshold: 0.035 * bodyPx, // ~6 cm for an adult: clear of the floor, above landmark jitter
-      approximate: !this.heightM,
-    };
   }
 
   #inAir(t, m) {
@@ -261,7 +186,7 @@ export class JumpTracker {
 
   #endAir() {
     this.air = null;
-    this.window = [];
+    this.stance.clear();
     this.phase = 'ready';
     return { phase: this.phase };
   }

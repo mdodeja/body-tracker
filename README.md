@@ -14,6 +14,9 @@ the first visit the app also works with no internet connection at all.
 - Optional finger tracking
 - **Jump measurement**: high jump (how far you rise off the ground) and long jump
   (take-off toe to landing heel), read out loud after each jump
+- **Sprint timing**: start and finish lines a set distance apart, drawn on screen;
+  gives your time, average speed and top speed
+- **Distance between two spots**: stand on one, then the other
 - Record a session and download it as CSV (angles + 3D joint positions per frame) or JSON (everything)
 - Analyse an existing video or photo instead of the live camera
 - Installable to the home screen; works offline
@@ -52,7 +55,9 @@ There is no build step and there are no runtime dependencies.
 | `vendor/tasks-vision/` | MediaPipe Tasks Vision 1.2.3 runtime (WebAssembly + WebGL) |
 | `js/app.js` | Camera, frame loop, drawing, UI |
 | `js/geometry.js` | Landmark names and joint-angle maths |
+| `js/stance.js` | Standing-still detection: floor line and image scale |
 | `js/jump.js` | Jump detection and measurement |
+| `js/measure.js` | Sprint timing and distance between two spots |
 | `js/recorder.js` | Recording and CSV/JSON export |
 | `sw.js` | Service worker that caches the app and models for offline use |
 
@@ -96,6 +101,34 @@ Expect accuracy of a few centimetres for height and several centimetres for dist
 30 frames per second. The biggest sources of error are a wrong height, a tilted phone,
 and jumping toward or away from the camera instead of across it. It measures how high
 *you* go, not the height of a bar you clear.
+
+## Timing a sprint
+
+Tap **Measure**, choose *Sprint*, and set the distance (5 m by default). Turn the
+phone on its side and put it far enough back that the whole run fits across the
+screen — roughly 6 m away for a 5 m sprint.
+
+1. Stand up straight and still where you want to start. The app says "Set" and draws
+   a green START line through you and a yellow FINISH line the chosen distance away,
+   toward whichever side has more room. If it says the finish line is out of view,
+   move the phone back or shorten the distance.
+2. Run. From a standing start the clock starts when you actually set off (leaning
+   forward and waiting does not start it); if you walk back and run through the
+   start line, it starts as you cross the line. It stops as your hips cross FINISH.
+3. You get the time, average speed and top speed. Walk back to the start for another
+   go, or stand still for 3 seconds anywhere to move the start line there.
+
+At 30 frames per second each line crossing is known to about a frame, so expect the
+time for a one-second sprint to be within a few percent. Top speed is the fastest
+0.3-second stretch.
+
+## Measuring a distance
+
+Choose *Distance between two spots*. Stand still on one spot until you hear "Marked",
+walk to the other and stand still again: the distance between them (midpoint of your
+feet to midpoint of your feet) is shown and spoken. This is the quickest way to check
+the scale against a tape measure — if a taped 1 m reads as 1 m, the jump and sprint
+figures can be trusted to the same degree.
 
 ## Limits to know about
 

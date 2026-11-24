@@ -101,6 +101,22 @@ async function samplePhoto() {
     check(await page.isVisible('#jump'), 'jump panel prompts the jumper to stand straight and still');
     const heightM = await page.evaluate(() => window.bodyTracker.jumpTracker.heightM);
     check(Math.abs(heightM - 1.778) < 0.001, 'height entered in feet and inches sets the scale');
+    // Sprint mode: distance is entered in yards when units are imperial.
+    await page.click('#btn-jump');
+    await page.selectOption('#opt-jump', 'sprint');
+    check(await page.isVisible('#row-sprint'), 'sprint distance can be set in sprint mode');
+    await page.fill('#opt-sprint', '10');
+    await page.click('#jump-dlg button.primary');
+    const sprintM = await page.evaluate(() => window.bodyTracker.sprintTracker.distanceM);
+    check(Math.abs(sprintM - 9.144) < 0.001, '10 yards is stored as 9.144 m');
+    await page.waitForFunction(() => document.getElementById('jump-mode').textContent.startsWith('Sprint'));
+    check((await page.innerText('#jump-status')).includes('start line'), 'sprint panel asks for a start position');
+    await page.click('#btn-jump');
+    await page.selectOption('#opt-jump', 'distance');
+    await page.click('#jump-dlg button.primary');
+    await page.waitForFunction(() => document.getElementById('jump-status').textContent.includes('first spot'));
+    check(true, 'distance panel asks for the first spot');
+
     await page.click('#btn-jump');
     await page.selectOption('#opt-jump', 'off');
     await page.click('#jump-dlg button.primary');

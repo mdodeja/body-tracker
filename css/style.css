@@ -139,8 +139,9 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 #jump-mode { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 #jump-status { font-size: 16px; font-weight: 600; margin-top: 2px; }
-#jump.ready #jump-status { color: #4ade80; }
-#jump.air #jump-status { color: var(--right); }
+#jump.ready #jump-status, #jump.set #jump-status, #jump.marked #jump-status { color: #4ade80; }
+#jump.air #jump-status, #jump.running #jump-status { color: var(--right); }
+#jump.blocked #jump-status { color: #ffb4bc; }
 #jump-value { font-size: 52px; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 #jump-chart { display: block; width: 100%; height: auto; margin: 4px 0 2px; }
 #jump-chart .axis { stroke: var(--line); stroke-width: 1; }
@@ -236,3 +237,28 @@ dialog p { margin: 0; color: var(--muted); align-self: flex-start; }
 #jump-list li { display: flex; justify-content: space-between; padding: 3px 0; }
 #jump-list li span:last-child { color: var(--muted); }
 .row input[type='checkbox'] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
+
+/* Phone on its side (how sprints and long jumps are filmed): keep the middle of the picture clear. */
+@media (orientation: landscape) and (max-height: 520px) {
+  #controls {
+    left: auto;
+    right: calc(env(safe-area-inset-right) + 8px);
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+    flex-direction: column;
+    padding: 4px;
+  }
+  #controls button { padding: 4px 0 3px; }
+  #controls svg { width: 20px; height: 20px; }
+  #jump {
+    top: calc(env(safe-area-inset-top) + 8px);
+    width: min(44vw, 340px);
+    padding: 6px 12px 8px;
+  }
+  #jump-status { font-size: 14px; }
+  #jump-value { font-size: 34px; }
+  #jump-chart { max-height: 72px; }
+  #angles { bottom: calc(env(safe-area-inset-bottom) + 8px); }
+  #intro { padding-bottom: 24px; }
+}

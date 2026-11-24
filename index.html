@@ -56,8 +56,8 @@
       <button id="btn-record" title="Record joint data" disabled>
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle class="dot" cx="12" cy="12" r="4"/></svg><span>Record</span>
       </button>
-      <button id="btn-jump" title="Measure a jump">
-        <svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M5 17c2-9 5-12 7-12s5 3 7 12"/><path d="M16 14l3 3 2-4"/></svg><span>Jump</span>
+      <button id="btn-jump" title="Measure a jump, a sprint or a distance">
+        <svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M5 17c2-9 5-12 7-12s5 3 7 12"/><path d="M16 14l3 3 2-4"/></svg><span>Measure</span>
       </button>
       <button id="btn-angles" title="Show joint angles">
         <svg viewBox="0 0 24 24"><path d="M4 20h16M4 20 16 5"/><path d="M11 20a7 7 0 0 0-2.2-5.1"/></svg><span>Angles</span>
@@ -94,13 +94,15 @@
 
   <dialog id="jump-dlg">
     <form method="dialog">
-      <h2>Measure a jump</h2>
+      <h2>Measure</h2>
       <label class="row">
         <span>Measure</span>
         <select id="opt-jump">
           <option value="off">Off</option>
           <option value="high">High jump</option>
           <option value="long">Long jump</option>
+          <option value="sprint">Sprint</option>
+          <option value="distance">Distance between two spots</option>
         </select>
       </label>
       <div class="row">
@@ -110,6 +112,10 @@
           <input id="opt-height-ft" type="number" inputmode="numeric" min="2" max="8" placeholder="ft">
           <input id="opt-height-in" type="number" inputmode="decimal" min="0" max="11.9" placeholder="in">
         </span>
+      </div>
+      <div class="row" id="row-sprint">
+        <span><span id="sprint-label">Sprint distance</span><small>Start line to finish line — both must fit in view</small></span>
+        <span class="height"><input id="opt-sprint" type="number" inputmode="decimal" min="2" max="60" step="0.5"></span>
       </div>
       <label class="row">
         <span>Units</span>
@@ -124,7 +130,7 @@
       </label>
       <p id="jump-howto"></p>
       <div id="jump-history" hidden>
-        <h3>Recent jumps</h3>
+        <h3>Recent results</h3>
         <ol id="jump-list"></ol>
         <button id="jump-clear" type="button" class="link">Clear history</button>
       </div>

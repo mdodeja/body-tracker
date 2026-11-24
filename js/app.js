@@ -2,6 +2,7 @@ import { FilesetResolver, PoseLandmarker, HandLandmarker } from '../vendor/tasks
 import { JOINTS, computeAngles, smoothAngles, sideOf } from './geometry.js';
 import { Recorder, download } from './recorder.js';
 import { JumpTracker, formatHeight, formatDistance } from './jump.js';
+import { DistanceTracker, SprintTracker, formatSpeed } from './measure.js';
 
 const WASM_PATH = new URL('../vendor/tasks-vision/wasm', import.meta.url).href;
 const MODEL_PATHS = {
@@ -22,6 +23,7 @@ const el = {
   jump: $('jump'), jumpChart: $('jump-chart'), jumpMode: $('jump-mode'), jumpStatus: $('jump-status'), jumpValue: $('jump-value'), jumpDetail: $('jump-detail'),
   jumpDlg: $('jump-dlg'), optJump: $('opt-jump'), optUnits: $('opt-units'), optSpeak: $('opt-speak'),
   optHeightCm: $('opt-height-cm'), optHeightFt: $('opt-height-ft'), optHeightIn: $('opt-height-in'),
+  optSprint: $('opt-sprint'), rowSprint: $('row-sprint'), sprintLabel: $('sprint-label'),
   jumpHowto: $('jump-howto'), jumpHistory: $('jump-history'), jumpList: $('jump-list'), jumpClear: $('jump-clear'),
   settings: $('settings'), optModel: $('opt-model'), optHands: $('opt-hands'), optLabels: $('opt-labels'),
   btnFile: $('btn-file'), file: $('file'),
@@ -32,7 +34,7 @@ const ctx = el.view.getContext('2d');
 const settings = Object.assign(
   {
     model: 'lite', hands: false, labels: true, angles: true, facing: 'user',
-    jumpMode: 'off', heightCm: null, speak: true,
+    jumpMode: 'off', heightCm: null, speak: true, sprintM: 5,
     units: /^en-(US|LR|MM)$/.test(navigator.language) ? 'imperial' : 'metric',
   },
   JSON.parse(localStorage.getItem('body-tracker-settings') || '{}'),
@@ -40,7 +42,13 @@ const settings = Object.assign(
 const saveSettings = () => localStorage.setItem('body-tracker-settings', JSON.stringify(settings));
 
 const recorder = new Recorder();
-const jumpTracker = new JumpTracker({ heightM: settings.heightCm ? settings.heightCm / 100 : null });
+const heightM = settings.heightCm ? settings.heightCm / 100 : null;
+const jumpTracker = new JumpTracker({ heightM });
+const sprintTracker = new SprintTracker({ heightM, distanceM: settings.sprintM });
+const distanceTracker = new DistanceTracker({ heightM });
+// One tracker per measuring mode (settings.jumpMode); both jumps share one.
+const trackers = { high: jumpTracker, long: jumpTracker, sprint: sprintTracker, distance: distanceTracker };
+const resetTrackers = () => [jumpTracker, sprintTracker, distanceTracker].forEach((t) => t.reset());
 let jumpHistory = JSON.parse(localStorage.getItem('body-tracker-jumps') || '[]');
 const state = {
   fileset: null,
@@ -58,8 +66,10 @@ const state = {
   wakeLock: null,
   last: null, // summary of the most recent frame, exposed for debugging and tests
   jumpPhase: 'searching',
-  lastJump: null, // most recent jump result, drawn over the video until the next take-off
+  lastJump: null, // most recent result of the current measuring mode, drawn over the video
   jumpTracker,
+  sprintTracker,
+  distanceTracker,
 };
 window.bodyTracker = state;
 
@@ -170,7 +180,7 @@ function begin() {
   state.lastVideoTime = -1;
   state.angles = null;
   state.lastJump = null;
-  jumpTracker.reset();
+  resetTrackers();
   el.intro.hidden = true;
   el.stats.hidden = false;
   requestWakeLock();
@@ -264,7 +274,7 @@ function tick(now) {
     // For a video file use the video's own clock, so slow processing does not stretch time.
     const jumpTime = src.kind === 'video' ? frame.currentTime * 1000 : now;
     const pixels = landmarks?.map((p) => ({ x: p.x * width, y: p.y * height, visibility: p.visibility })) ?? null;
-    onJumpUpdate(jumpTracker.update(jumpTime, pixels, world, rawAngles));
+    onJumpUpdate(trackers[settings.jumpMode].update(jumpTime, pixels, world, rawAngles, width));
   }
 
   draw(frame, width, height, src.mirror, landmarks, hands);
@@ -354,15 +364,18 @@ function draw(frame, width, height, mirror, pose, hands) {
     }
   }
 
-  if (pose && settings.labels && state.angles) drawAngleLabels(pose, unit, px, py);
+  // While measuring, the angle readouts are clutter: leave the picture to the lines and marks.
   if (settings.jumpMode !== 'off') drawJump(width, mirror, unit);
+  else if (pose && settings.labels && state.angles) drawAngleLabels(pose, unit, px, py);
 }
 
 /** Floor line while armed, plus the last jump's measurement drawn where it happened. */
 function drawJump(width, mirror, unit) {
+  const mx = (x) => (mirror ? width - x : x);
+  if (settings.jumpMode === 'sprint') return drawSprintLines(mx, unit);
+  if (settings.jumpMode === 'distance') return drawDistanceMarks(mx, unit);
   const cal = jumpTracker.cal;
   if (!cal) return;
-  const mx = (x) => (mirror ? width - x : x);
   ctx.lineWidth = unit * 0.7;
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
   ctx.setLineDash([unit * 3, unit * 3]);
@@ -464,7 +477,50 @@ function updateReadouts(tracking) {
   if (recorder.active) el.recTime.textContent = `● ${formatDuration(performance.now() - recorder.startedAt)}`;
 }
 
-// ---------------------------------------------------------------- jump measurement
+/** Start and finish lines for the sprint, standing up from the floor. */
+function drawSprintLines(mx, unit) {
+  const lines = sprintTracker.lines;
+  if (!lines) return;
+  const top = el.view.height * 0.12;
+  const post = (x, color, label) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = unit * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(mx(x), top);
+    ctx.lineTo(mx(x), lines.ground);
+    ctx.stroke();
+    ctx.font = `700 ${unit * 6}px system-ui, sans-serif`;
+    // Label beside the foot of the line, clear of the on-screen panels at the top.
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = color;
+    ctx.fillText(label, mx(x) + unit * 2, lines.ground - unit * 2);
+  };
+  post(lines.startX, '#4ade80', 'START');
+  if (lines.fits) post(lines.finishX, '#facc15', 'FINISH');
+}
+
+/** The spot last stood on, and the span of the last measurement. */
+function drawDistanceMarks(mx, unit) {
+  const spot = distanceTracker.spot;
+  if (!spot) return;
+  const tick = unit * 5;
+  const marks = state.lastJump?.marks;
+  ctx.strokeStyle = '#facc15';
+  ctx.lineWidth = unit * 1.4;
+  ctx.beginPath();
+  for (const x of marks ? [marks.fromX, marks.toX] : [spot.x]) {
+    ctx.moveTo(mx(x), spot.ground - tick);
+    ctx.lineTo(mx(x), spot.ground + tick);
+  }
+  if (marks) {
+    ctx.moveTo(mx(marks.fromX), marks.groundY);
+    ctx.lineTo(mx(marks.toX), marks.groundY);
+  }
+  ctx.stroke();
+}
+
+// ---------------------------------------------------------------- measuring: jumps, sprint, distance
 
 const JUMP_TEXT = {
   high: {
@@ -475,17 +531,50 @@ const JUMP_TEXT = {
     title: 'Long jump',
     howto: 'Prop the phone up side-on, so you jump across the screen and both take-off and landing are in view. Stand up straight and still at the take-off spot for a second, then jump — or walk back first for a run-up.',
   },
+  sprint: {
+    title: 'Sprint',
+    howto: 'Prop the phone up side-on and far enough back that the whole run fits across the screen. Stand up straight and still on your start line until you hear "Set": the start and finish lines appear on screen, with the finish toward the side with more room. Then run — from the line, or walk back and run through it. To move the start line, stand still on the new spot for 3 seconds.',
+  },
+  distance: {
+    title: 'Distance',
+    howto: 'Prop the phone up side-on. Stand up straight and still on the first spot until you hear "Marked", then walk to the second spot and stand still again. Stay the same distance from the phone at both spots. Each new spot is measured from the last one.',
+  },
 };
+const WHOLE_BODY = 'Step back until your whole body is in view';
 const JUMP_STATUS = {
-  searching: 'Step back until your whole body is in view',
+  searching: WHOLE_BODY,
   steady: 'Stand up straight and hold still',
   ready: 'Ready — jump!',
   air: 'In the air…',
 };
+const SPRINT_STATUS = {
+  searching: WHOLE_BODY,
+  steady: 'Stand still on your start line',
+  set: 'Lines set — go when ready',
+  running: 'Go!',
+};
+const DISTANCE_STATUS = {
+  searching: WHOLE_BODY,
+  steady: 'Stand still on the first spot',
+  marked: 'Marked — now stand still on the next spot',
+};
+const FINISH_OUT_OF_VIEW = 'Finish line is out of view — move the phone back or shorten the distance';
 
-const jumpValue = (jump, mode = jump.mode) => (mode === 'long' ? jump.distanceM : jump.riseM);
-const formatJump = (jump, spoken = false, mode = jump.mode) =>
-  (mode === 'long' ? formatDistance : formatHeight)(jumpValue(jump, mode), settings.units, spoken);
+/** What "better" means in each mode, for the personal best. Distance has none. */
+const jumpValue = (jump, mode = jump.mode) =>
+  ({ high: jump.riseM, long: jump.distanceM, sprint: jump.avgMps })[mode];
+
+function formatJump(jump, spoken = false, mode = jump.mode) {
+  if (mode === 'sprint') return `${(jump.timeMs / 1000).toFixed(2)} ${spoken ? 'seconds' : 's'}`;
+  if (mode === 'high') return formatHeight(jump.riseM, settings.units, spoken);
+  return formatDistance(jump.distanceM, settings.units, spoken);
+}
+
+function saveResult(entry, extras = {}) {
+  state.lastJump = { ...entry, ...extras };
+  jumpHistory = [entry, ...jumpHistory].slice(0, 100);
+  localStorage.setItem('body-tracker-jumps', JSON.stringify(jumpHistory));
+}
 
 function say(text) {
   if (!settings.speak || !window.speechSynthesis) return;
@@ -495,21 +584,31 @@ function say(text) {
 
 function onJumpUpdate({ phase, event, result }) {
   state.jumpPhase = phase;
+  const mode = settings.jumpMode;
+  const at = new Date().toISOString();
   if (event === 'calibrated') say('Ready');
-  if (event === 'takeoff') state.lastJump = null;
-  if (event === 'result') {
+  if (event === 'set') say('Set');
+  if (event === 'nofit') say('Finish line is out of view');
+  if (event === 'marked') say('Marked');
+  if (event === 'takeoff' || event === 'start') state.lastJump = null;
+  if (event === 'result' && mode === 'sprint') {
+    const { timeMs, distanceM, avgMps, topMps, approximate } = result;
+    saveResult({ at, mode, timeMs: Math.round(timeMs), distanceM, avgMps, topMps, approximate });
+    say(`${formatJump(state.lastJump, true)}. ${formatSpeed(avgMps, settings.units, true)}`);
+  } else if (event === 'result' && mode === 'distance') {
+    saveResult({ at, mode, distanceM: result.distanceM, approximate: result.approximate }, { marks: result.marks });
+    say(formatJump(state.lastJump, true));
+  } else if (event === 'result') {
     const jump = {
-      at: new Date().toISOString(),
-      mode: settings.jumpMode,
+      at,
+      mode,
       riseM: result.riseM,
       distanceM: result.distanceM,
       flightMs: Math.round(result.flightMs),
       flightHeightM: result.flightHeightM,
       approximate: result.approximate,
     };
-    state.lastJump = { ...jump, marks: result.marks, peakMs: result.peakMs, path: result.path, pathPx: result.pathPx };
-    jumpHistory = [jump, ...jumpHistory].slice(0, 100);
-    localStorage.setItem('body-tracker-jumps', JSON.stringify(jumpHistory));
+    saveResult(jump, { marks: result.marks, peakMs: result.peakMs, path: result.path, pathPx: result.pathPx });
     say(formatJump(jump, true));
   }
   renderJumpPanel();
@@ -521,23 +620,30 @@ function renderJumpPanel() {
   el.jump.hidden = !show;
   if (!show) return;
   const phase = state.jumpPhase;
-  el.jump.className = phase;
-  el.jumpMode.textContent = JUMP_TEXT[mode].title;
-  el.jumpStatus.textContent = JUMP_STATUS[phase];
+  const blocked = mode === 'sprint' && phase === 'set' && sprintTracker.lines && !sprintTracker.lines.fits;
+  el.jump.className = blocked ? 'blocked' : phase;
+  el.jumpMode.textContent = mode === 'sprint' ? `Sprint · ${formatDistance(settings.sprintM, settings.units)}` : JUMP_TEXT[mode].title;
+  const statuses = mode === 'sprint' ? SPRINT_STATUS : mode === 'distance' ? DISTANCE_STATUS : JUMP_STATUS;
+  el.jumpStatus.textContent = blocked ? FINISH_OUT_OF_VIEW : statuses[phase] ?? '';
 
   const last = state.lastJump;
   el.jumpValue.textContent = last ? formatJump(last, false, mode) : '';
-  if (el.jumpChart.jump !== last) {
-    el.jumpChart.jump = last;
-    el.jumpChart.toggleAttribute('hidden', !last); // SVG elements have no .hidden property
-    if (last) renderJumpChart(last, mode);
+  const arc = last?.path ? last : null; // only jumps have an arc to chart
+  if (el.jumpChart.jump !== arc) {
+    el.jumpChart.jump = arc;
+    el.jumpChart.toggleAttribute('hidden', !arc); // SVG elements have no .hidden property
+    if (arc) renderJumpChart(arc, mode);
   }
   const past = jumpHistory.filter((j) => j.mode === mode);
   const details = [];
-  if (last) details.push(`${(last.flightMs / 1000).toFixed(2)} s in the air`);
-  if (past.length) {
+  if (last && mode === 'sprint') {
+    details.push(`average ${formatSpeed(last.avgMps, settings.units)}`, `top ${formatSpeed(last.topMps, settings.units)}`);
+  } else if (last && mode !== 'distance') {
+    details.push(`${(last.flightMs / 1000).toFixed(2)} s in the air`);
+  }
+  if (past.length && mode !== 'distance') {
     const best = past.reduce((a, b) => (jumpValue(b) > jumpValue(a) ? b : a));
-    details.push(`best ${formatJump(best)}`);
+    details.push(`best ${mode === 'sprint' ? formatSpeed(best.avgMps, settings.units) : formatJump(best)}`);
   }
   if (!settings.heightCm) details.push('estimate — enter your height for accuracy');
   el.jumpDetail.textContent = details.join(' · ');
@@ -579,6 +685,8 @@ function renderJumpDialog() {
   el.optHeightCm.hidden = imperial;
   el.optHeightFt.hidden = el.optHeightIn.hidden = !imperial;
   $('height-label').textContent = imperial ? 'Your height (ft, in)' : 'Your height (cm)';
+  el.rowSprint.hidden = mode !== 'sprint';
+  el.sprintLabel.textContent = imperial ? 'Sprint distance (yards)' : 'Sprint distance (m)';
   el.jumpHowto.textContent = JUMP_TEXT[mode]?.howto ?? '';
   el.jumpHowto.hidden = mode === 'off';
 
@@ -604,6 +712,20 @@ function showHeight() {
   el.optHeightIn.value = inches ? inches % 12 : '';
 }
 
+const YARD = 0.9144;
+function showSprint() {
+  const value = el.optUnits.value === 'imperial' ? settings.sprintM / YARD : settings.sprintM;
+  el.optSprint.value = Math.round(value * 10) / 10;
+}
+
+function readSprint() {
+  const metres = Number(el.optSprint.value) * (el.optUnits.value === 'imperial' ? YARD : 1);
+  if (!(metres >= 2 && metres <= 60) || Math.abs(metres - settings.sprintM) < 0.01) return;
+  settings.sprintM = metres;
+  sprintTracker.setDistance(metres);
+  state.lastJump = null;
+}
+
 function readHeight() {
   const cm =
     el.optUnits.value === 'imperial'
@@ -612,7 +734,7 @@ function readHeight() {
   const valid = cm >= 80 && cm <= 250 ? cm : null;
   if (valid === settings.heightCm) return;
   settings.heightCm = valid;
-  jumpTracker.setHeight(valid ? valid / 100 : null);
+  for (const tracker of [jumpTracker, sprintTracker, distanceTracker]) tracker.setHeight(valid ? valid / 100 : null);
   state.lastJump = null;
 }
 
@@ -635,7 +757,7 @@ function syncUi() {
   el.btnRecord.classList.toggle('on', recorder.active);
   el.recTime.hidden = !recorder.active;
   el.btnAngles.classList.toggle('on', settings.angles);
-  el.angles.hidden = !(settings.angles && active);
+  el.angles.hidden = !(settings.angles && active && settings.jumpMode === 'off');
   el.btnJump.classList.toggle('on', settings.jumpMode !== 'off');
   renderJumpPanel();
 }
@@ -701,14 +823,20 @@ el.btnJump.onclick = () => {
   el.optUnits.value = settings.units;
   el.optSpeak.checked = settings.speak;
   showHeight();
+  showSprint();
   renderJumpDialog();
   el.jumpDlg.showModal();
 };
 el.optJump.onchange = renderJumpDialog;
 el.optUnits.onchange = () => {
-  readHeight(); // keep what was typed, in the units it was typed in
-  settings.units = el.optUnits.value;
+  // Read what was typed in the units it was typed in, then redisplay in the new ones.
+  const next = el.optUnits.value;
+  el.optUnits.value = settings.units;
+  readHeight();
+  readSprint();
+  settings.units = el.optUnits.value = next;
   showHeight();
+  showSprint();
   renderJumpDialog();
 };
 el.jumpClear.onclick = () => {
@@ -718,10 +846,11 @@ el.jumpClear.onclick = () => {
 };
 el.jumpDlg.onclose = () => {
   readHeight();
+  readSprint();
   if (settings.jumpMode !== el.optJump.value) {
     settings.jumpMode = el.optJump.value;
     state.lastJump = null;
-    jumpTracker.reset();
+    resetTrackers();
     state.jumpPhase = 'searching';
   }
   settings.units = el.optUnits.value;
