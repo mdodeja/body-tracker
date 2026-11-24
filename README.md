@@ -21,9 +21,9 @@ the first visit the app also works with no internet connection at all.
 Browsers only allow camera access on HTTPS pages, so the app has to be served
 from an HTTPS address.
 
-**GitHub Pages (simplest).** Merge this into `main`, then in the repository go to
-*Settings → Pages* and set *Source* to *GitHub Actions*. The included workflow
-publishes the app; open the resulting `https://<user>.github.io/body-tracker/`
+**GitHub Pages (simplest).** In the repository go to *Settings → Pages*, set
+*Source* to *Deploy from a branch*, and pick `main` and `/ (root)`. A minute or
+two later the app is at `https://<user>.github.io/body-tracker/`; open that
 address on the phone. Note that a Pages site is public even if the repository is
 private (it contains only the app, never your data).
 

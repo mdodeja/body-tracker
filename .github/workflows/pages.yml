@@ -1,10 +1,10 @@
-# Publishes the app to GitHub Pages so it can be opened on a phone over HTTPS.
-# Requires: repository Settings -> Pages -> Source = "GitHub Actions".
+# Alternative way to publish the app to GitHub Pages (run manually from the Actions tab).
+# Requires: repository Settings -> Pages -> Source = "GitHub Actions", and free
+# Actions artifact storage on the account. The default route needs neither: set the
+# Pages source to "Deploy from a branch" (main, / root) and the site is served as-is.
 name: Deploy to GitHub Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
