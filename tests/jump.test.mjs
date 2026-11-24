@@ -9,11 +9,11 @@ const FLOOR = 900;
 const FPS = 30;
 
 /** Stick figure with feet at (x, FLOOR - lift) — lift and x in pixels. */
-function pose(x, lift = 0, { tuck = 0 } = {}) {
+function pose(x, lift = 0, { tuck = 0, squat = 0 } = {}) {
   const pts = Array.from({ length: 33 }, () => ({ x, y: 0, visibility: 0.95 }));
   const at = (i, dx, heightM) => Object.assign(pts[i], { x: x + dx, y: FLOOR - lift - heightM * SCALE });
-  at(2, 0, HEIGHT_M * 0.936); at(5, 0, HEIGHT_M * 0.936);
-  at(23, 0, 0.95); at(24, 0, 0.95);
+  at(2, 0, HEIGHT_M * 0.936 - squat); at(5, 0, HEIGHT_M * 0.936 - squat);
+  at(23, 0, 0.95 - squat); at(24, 0, 0.95 - squat);
   at(25, 0, 0.5 + tuck); at(26, 0, 0.5 + tuck);
   at(27, 0, 0.08 + tuck); at(28, 0, 0.08 + tuck);
   at(29, -20, tuck); at(30, -20, tuck); // heels
@@ -80,6 +80,37 @@ test('measures a vertical jump', () => {
     assert.ok(result.path.at(-1).riseM < top / 2 && result.path[0].riseM < top / 2);
     assert.equal(result.pathPx.length, result.path.length);
   }
+});
+
+test('reads the dip and push before a countermovement jump', () => {
+  const tracker = new JumpTracker({ heightM: HEIGHT_M });
+  const dt = 1000 / FPS;
+  let t = 0;
+  for (; t < 1500; t += dt) tracker.update(t, pose(500), null, STRAIGHT);
+  // Dip 30 cm over 0.4 s, push back up over 0.25 s, then leave the floor.
+  const t1 = t;
+  for (; t < t1 + 400; t += dt) tracker.update(t, pose(500, 0, { squat: 0.3 * ((t - t1) / 400) }));
+  const t2 = t;
+  for (; t < t2 + 250; t += dt) tracker.update(t, pose(500, 0, { squat: 0.3 * (1 - (t - t2) / 250) }));
+  const flightS = 0.5;
+  const t3 = t - dt / 2;
+  let result;
+  for (; !result && t < t3 + 2000; t += dt) {
+    const s = Math.min((t - t3) / 1000, flightS);
+    result = tracker.update(t, pose(500, 0.5 * G * s * (flightS - s) * SCALE)).result;
+  }
+  assert.ok(result, 'jump measured');
+  assert.ok(Math.abs(result.dipM - 0.3) < 0.03, `dip ${result.dipM}`);
+  assert.ok(Math.abs(result.concentricMs - 250) < 60, `push ${result.concentricMs}`);
+  assert.ok(Math.abs(result.timeToTakeoffMs - 650) < 80, `time to take-off ${result.timeToTakeoffMs}`);
+  assert.ok(Math.abs(result.takeoffMps - (G * flightS) / 2) < 0.25, `take-off speed ${result.takeoffMps}`);
+});
+
+test('reports no dip for a jump straight from standing', () => {
+  const { result } = simulate(new JumpTracker({ heightM: HEIGHT_M }), { riseM: 0.4 });
+  assert.equal(result.dipM, null);
+  assert.equal(result.concentricMs, null);
+  assert.ok(result.takeoffMps > 2.5 && result.takeoffMps < 3.1, `take-off speed ${result.takeoffMps}`);
 });
 
 test('measures a long jump from take-off toe to landing heel', () => {

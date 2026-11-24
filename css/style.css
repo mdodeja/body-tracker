@@ -150,6 +150,15 @@ button:disabled { opacity: 0.45; cursor: default; }
 #jump-chart .drop { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
 #jump-chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
 #jump-chart text.value { fill: var(--text); font-weight: 600; }
+#jump-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px 8px;
+  margin: 6px 0 4px;
+}
+#jump-metrics div { min-width: 0; }
+#jump-metrics dt { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+#jump-metrics dd { margin: 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #jump-value:empty, #jump-detail:empty { display: none; }
 #jump-detail { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 

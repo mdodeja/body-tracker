@@ -97,6 +97,17 @@ How the numbers are worked out:
   take-off to the rear-most part of your feet at landing.
 - Take-off and landing are the moments your feet clear, and return to, the floor line.
 
+For a high jump the panel also shows the standard jump-test numbers:
+
+| Metric | Meaning |
+| --- | --- |
+| Air time | Take-off to landing |
+| Flight height | Height worked out from air time (g·t²/8) — the convention used by force plates and jump mats. Lower than the headline, which also counts rising onto your toes |
+| Take-off | Speed leaving the floor (g·t/2) |
+| Push-off | Lowest point of the dip to take-off (the "concentric" phase). Shown only if you dipped at least 5 cm |
+| RSI-mod | Flight height ÷ time from the start of the dip to take-off |
+| Peak power | Sayers estimate from flight height and body weight. Shown only if you entered your weight |
+
 Expect accuracy of a few centimetres for height and several centimetres for distance at
 30 frames per second. The biggest sources of error are a wrong height, a tilted phone,
 and jumping toward or away from the camera instead of across it. It measures how high

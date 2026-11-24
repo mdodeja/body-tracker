@@ -23,6 +23,7 @@ const el = {
   jump: $('jump'), jumpChart: $('jump-chart'), jumpMode: $('jump-mode'), jumpStatus: $('jump-status'), jumpValue: $('jump-value'), jumpDetail: $('jump-detail'),
   jumpDlg: $('jump-dlg'), optJump: $('opt-jump'), optUnits: $('opt-units'), optSpeak: $('opt-speak'),
   optHeightCm: $('opt-height-cm'), optHeightFt: $('opt-height-ft'), optHeightIn: $('opt-height-in'),
+  jumpMetrics: $('jump-metrics'), optWeight: $('opt-weight'), rowWeight: $('row-weight'), weightLabel: $('weight-label'),
   optSprint: $('opt-sprint'), rowSprint: $('row-sprint'), sprintLabel: $('sprint-label'),
   jumpHowto: $('jump-howto'), jumpHistory: $('jump-history'), jumpList: $('jump-list'), jumpClear: $('jump-clear'),
   settings: $('settings'), optModel: $('opt-model'), optHands: $('opt-hands'), optLabels: $('opt-labels'),
@@ -34,7 +35,7 @@ const ctx = el.view.getContext('2d');
 const settings = Object.assign(
   {
     model: 'lite', hands: false, labels: true, angles: true, facing: 'user',
-    jumpMode: 'off', heightCm: null, speak: true, sprintM: 5,
+    jumpMode: 'off', heightCm: null, weightKg: null, speak: true, sprintM: 5,
     units: /^en-(US|LR|MM)$/.test(navigator.language) ? 'imperial' : 'metric',
   },
   JSON.parse(localStorage.getItem('body-tracker-settings') || '{}'),
@@ -606,6 +607,11 @@ function onJumpUpdate({ phase, event, result }) {
       distanceM: result.distanceM,
       flightMs: Math.round(result.flightMs),
       flightHeightM: result.flightHeightM,
+      takeoffMps: result.takeoffMps,
+      dipM: result.dipM,
+      concentricMs: result.concentricMs == null ? null : Math.round(result.concentricMs),
+      timeToTakeoffMs: result.timeToTakeoffMs == null ? null : Math.round(result.timeToTakeoffMs),
+      weightKg: settings.weightKg,
       approximate: result.approximate,
     };
     saveResult(jump, { marks: result.marks, peakMs: result.peakMs, path: result.path, pathPx: result.pathPx });
@@ -634,11 +640,20 @@ function renderJumpPanel() {
     el.jumpChart.toggleAttribute('hidden', !arc); // SVG elements have no .hidden property
     if (arc) renderJumpChart(arc, mode);
   }
+  const metrics = last && mode === 'high' ? jumpMetrics(last) : [];
+  el.jumpMetrics.hidden = !metrics.length;
+  el.jumpMetrics.replaceChildren(
+    ...metrics.map(([label, value]) => {
+      const cell = document.createElement('div');
+      cell.append(Object.assign(document.createElement('dt'), { textContent: label }), Object.assign(document.createElement('dd'), { textContent: value }));
+      return cell;
+    }),
+  );
   const past = jumpHistory.filter((j) => j.mode === mode);
   const details = [];
   if (last && mode === 'sprint') {
     details.push(`average ${formatSpeed(last.avgMps, settings.units)}`, `top ${formatSpeed(last.topMps, settings.units)}`);
-  } else if (last && mode !== 'distance') {
+  } else if (last && mode === 'long') {
     details.push(`${(last.flightMs / 1000).toFixed(2)} s in the air`);
   }
   if (past.length && mode !== 'distance') {
@@ -647,6 +662,30 @@ function renderJumpPanel() {
   }
   if (!settings.heightCm) details.push('estimate — enter your height for accuracy');
   el.jumpDetail.textContent = details.join(' · ');
+}
+
+/**
+ * The standard jump-test numbers for a vertical jump, as [label, value] pairs.
+ * Heights here are from air time (the body's rise after the feet leave the floor), the
+ * convention used by force plates and jump mats — lower than the headline, which is the
+ * rise from standing and so includes going up onto the toes.
+ */
+function jumpMetrics(jump) {
+  const seconds = (ms) => `${(ms / 1000).toFixed(2)} s`;
+  const out = [
+    ['Air time', seconds(jump.flightMs)],
+    ['Flight height', formatHeight(jump.flightHeightM, settings.units)],
+    ['Take-off', `${jump.takeoffMps.toFixed(2)} m/s`],
+  ];
+  if (jump.concentricMs != null) out.push(['Push-off', seconds(jump.concentricMs)]);
+  // Modified reactive strength index: flight height over the time taken to produce it.
+  if (jump.timeToTakeoffMs) out.push(['RSI-mod', (jump.flightHeightM / (jump.timeToTakeoffMs / 1000)).toFixed(2)]);
+  if (jump.weightKg) {
+    // Sayers equation: an estimate of peak power from jump height and body mass.
+    const watts = 60.7 * jump.flightHeightM * 100 + 45.3 * jump.weightKg - 2055;
+    if (watts > 0) out.push(['Peak power', `${Math.round(watts).toLocaleString()} W`]);
+  }
+  return out;
 }
 
 /**
@@ -686,6 +725,8 @@ function renderJumpDialog() {
   el.optHeightFt.hidden = el.optHeightIn.hidden = !imperial;
   $('height-label').textContent = imperial ? 'Your height (ft, in)' : 'Your height (cm)';
   el.rowSprint.hidden = mode !== 'sprint';
+  el.rowWeight.hidden = mode !== 'high';
+  el.weightLabel.textContent = imperial ? 'Body weight (lb)' : 'Body weight (kg)';
   el.sprintLabel.textContent = imperial ? 'Sprint distance (yards)' : 'Sprint distance (m)';
   el.jumpHowto.textContent = JUMP_TEXT[mode]?.howto ?? '';
   el.jumpHowto.hidden = mode === 'off';
@@ -710,6 +751,20 @@ function showHeight() {
   const inches = cm ? Math.round(cm / 2.54) : null;
   el.optHeightFt.value = inches ? Math.floor(inches / 12) : '';
   el.optHeightIn.value = inches ? inches % 12 : '';
+}
+
+const POUND = 0.45359237;
+function showWeight() {
+  const kg = settings.weightKg;
+  el.optWeight.value = kg ? Math.round(el.optUnits.value === 'imperial' ? kg / POUND : kg) : '';
+}
+
+function readWeight() {
+  const kg = Number(el.optWeight.value) * (el.optUnits.value === 'imperial' ? POUND : 1);
+  const valid = kg >= 20 && kg <= 250 ? kg : null;
+  // Whole kilos or pounds are shown, so ignore the rounding when nothing was retyped.
+  if (valid && settings.weightKg && Math.abs(valid - settings.weightKg) < 0.5) return;
+  settings.weightKg = valid;
 }
 
 const YARD = 0.9144;
@@ -824,6 +879,7 @@ el.btnJump.onclick = () => {
   el.optSpeak.checked = settings.speak;
   showHeight();
   showSprint();
+  showWeight();
   renderJumpDialog();
   el.jumpDlg.showModal();
 };
@@ -834,9 +890,11 @@ el.optUnits.onchange = () => {
   el.optUnits.value = settings.units;
   readHeight();
   readSprint();
+  readWeight();
   settings.units = el.optUnits.value = next;
   showHeight();
   showSprint();
+  showWeight();
   renderJumpDialog();
 };
 el.jumpClear.onclick = () => {
@@ -847,6 +905,7 @@ el.jumpClear.onclick = () => {
 el.jumpDlg.onclose = () => {
   readHeight();
   readSprint();
+  readWeight();
   if (settings.jumpMode !== el.optJump.value) {
     settings.jumpMode = el.optJump.value;
     state.lastJump = null;

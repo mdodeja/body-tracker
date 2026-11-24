@@ -34,6 +34,7 @@ export class JumpTracker {
     this.stance.clear();
     this.lastGround = null;
     this.prevGround = null;
+    this.groundHips = []; // recent hip heights while on the floor: the dip and push before a jump
     this.air = null;
     this.lastT = -Infinity;
   }
@@ -64,6 +65,7 @@ export class JumpTracker {
         tOff: (this.lastGround.t + t) / 2,
         lastAirT: t,
         takeoffFeetX: this.#takeoffFeetX(),
+        pre: this.groundHips,
         hipX0: this.lastGround.hipX,
         hipY0: this.lastGround.hipY,
         recentHipY: [m.hipY],
@@ -74,12 +76,15 @@ export class JumpTracker {
         // Hip positions through the jump, for drawing its arc.
         path: [{ t: this.lastGround.t, x: this.lastGround.hipX, y: this.lastGround.hipY }, { t, x: m.hipX, y: m.hipY }],
       };
+      this.groundHips = [];
       this.stance.clear();
       this.phase = 'air';
       return { phase: this.phase, event: 'takeoff' };
     }
     this.prevGround = this.lastGround;
     this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY };
+    this.groundHips.push({ t, y: m.hipY });
+    while (t - this.groundHips[0].t > 2500) this.groundHips.shift();
 
     const wasReady = this.phase === 'ready';
     const cal = this.stance.update(t, m, angles);
@@ -155,6 +160,8 @@ export class JumpTracker {
       flightHeightM: (G * (flightMs / 1000) ** 2) / 8,
       distanceM: Math.max(0, dir * (landingX - takeoffX)) / cal.scale,
       approximate: cal.approximate,
+      takeoffMps: (G * (flightMs / 1000)) / 2, // from air time: up for half of it, down for half
+      ...this.#pushOff(),
       peakMs: Math.max(0, air.peakT - air.tOff),
       // The arc of the hips: time since take-off, distance travelled, height above standing.
       path: air.path.map((p) => ({
@@ -170,6 +177,32 @@ export class JumpTracker {
     this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY };
     this.#endAir();
     return { phase: this.phase, event: 'result', result };
+  }
+
+  /**
+   * The dip and push before take-off (a countermovement), read from the hips:
+   *   dipM            how far the hips dropped below standing
+   *   concentricMs    lowest point to take-off — the upward push
+   *   timeToTakeoffMs start of the dip to take-off
+   * All null when there was no real dip (under 5 cm), e.g. a jump from a held squat.
+   */
+  #pushOff() {
+    const none = { dipM: null, concentricMs: null, timeToTakeoffMs: null };
+    const { pre, tOff } = this.air;
+    const { hipY, scale } = this.cal;
+    if (pre.length < 3) return none;
+    const lowestY = Math.max(...pre.map((s) => s.y));
+    const dipM = (lowestY - hipY) / scale;
+    if (dipM < 0.05) return none;
+    // The last moment at the bottom, and before it the last moment still standing tall.
+    const bottom = pre.findLast((s) => s.y >= lowestY - 0.01 * scale);
+    const tall = hipY + Math.max(0.02 * scale, 0.1 * (lowestY - hipY));
+    const onset = pre.findLast((s) => s.t < bottom.t && s.y <= tall);
+    return {
+      dipM,
+      concentricMs: tOff - bottom.t,
+      timeToTakeoffMs: onset ? tOff - onset.t : null,
+    };
   }
 
   /**

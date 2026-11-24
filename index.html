@@ -36,6 +36,7 @@
       <div id="jump-status"></div>
       <div id="jump-value"></div>
       <svg id="jump-chart" viewBox="0 0 320 104" role="img" hidden></svg>
+      <dl id="jump-metrics" hidden></dl>
       <div id="jump-detail"></div>
     </section>
 
@@ -112,6 +113,10 @@
           <input id="opt-height-ft" type="number" inputmode="numeric" min="2" max="8" placeholder="ft">
           <input id="opt-height-in" type="number" inputmode="decimal" min="0" max="11.9" placeholder="in">
         </span>
+      </div>
+      <div class="row" id="row-weight">
+        <span><span id="weight-label">Body weight</span><small>Optional — only used to estimate jump power</small></span>
+        <span class="height"><input id="opt-weight" type="number" inputmode="decimal" min="20" max="600"></span>
       </div>
       <div class="row" id="row-sprint">
         <span><span id="sprint-label">Sprint distance</span><small>Start line to finish line — both must fit in view</small></span>
