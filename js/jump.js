@@ -109,6 +109,9 @@ export class JumpTracker {
         recentFoot: [m.lowestFoot],
         peakY: m.hipY,
         peakX: m.hipX,
+        peakT: t,
+        // Hip positions through the jump, for drawing its arc.
+        path: [{ t: this.lastGround.t, x: this.lastGround.hipX, y: this.lastGround.hipY }, { t, x: m.hipX, y: m.hipY }],
       };
       this.window = [];
       this.phase = 'air';
@@ -192,7 +195,9 @@ export class JumpTracker {
     if (hipY < air.peakY) {
       air.peakY = hipY;
       air.peakX = m.hipX;
+      air.peakT = t;
     }
+    if (!air.touch) air.path.push({ t, x: m.hipX, y: m.hipY });
     air.recentFoot = [...air.recentFoot.slice(-2), m.lowestFoot];
 
     const touched = m.lowestFoot >= cal.ground - cal.threshold / 2;
@@ -225,6 +230,14 @@ export class JumpTracker {
       flightHeightM: (G * (flightMs / 1000) ** 2) / 8,
       distanceM: Math.max(0, dir * (landingX - takeoffX)) / cal.scale,
       approximate: cal.approximate,
+      peakMs: Math.max(0, air.peakT - air.tOff),
+      // The arc of the hips: time since take-off, distance travelled, height above standing.
+      path: air.path.map((p) => ({
+        tMs: Math.max(0, p.t - air.tOff),
+        xM: (dir * (p.x - air.hipX0)) / cal.scale,
+        riseM: (cal.hipY - p.y) / cal.scale,
+      })),
+      pathPx: air.path.map((p) => ({ x: p.x, y: p.y })),
       // Pixel positions, for drawing the measurement over the video.
       marks: { takeoffX, landingX, groundY: cal.ground, peakX: air.peakX, peakY: air.peakY, standingHipY: cal.hipY },
     };

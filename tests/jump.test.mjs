@@ -72,6 +72,13 @@ test('measures a vertical jump', () => {
     assert.ok(Math.abs(result.flightMs - flightS * 1000) < 40, `flight ${result.flightMs} vs ${flightS * 1000}`);
     assert.ok(Math.abs(result.flightHeightM - riseM) < 0.08, `flight-time height ${result.flightHeightM}`);
     assert.ok(result.distanceM < 0.05);
+    // The recorded arc rises to a single peak near the middle of the flight.
+    assert.ok(result.path.length >= 6, `path has ${result.path.length} points`);
+    const top = Math.max(...result.path.map((p) => p.riseM));
+    assert.ok(Math.abs(top - riseM) < 0.02, `arc peak ${top}`);
+    assert.ok(Math.abs(result.peakMs - result.flightMs / 2) < 60, `peak at ${result.peakMs} of ${result.flightMs}`);
+    assert.ok(result.path.at(-1).riseM < top / 2 && result.path[0].riseM < top / 2);
+    assert.equal(result.pathPx.length, result.path.length);
   }
 });
 

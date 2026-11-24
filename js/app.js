@@ -19,7 +19,7 @@ const el = {
   angles: $('angles'), angleRows: $('angle-rows'),
   btnCamera: $('btn-camera'), btnFlip: $('btn-flip'), btnRecord: $('btn-record'),
   btnAngles: $('btn-angles'), btnSettings: $('btn-settings'), btnJump: $('btn-jump'),
-  jump: $('jump'), jumpMode: $('jump-mode'), jumpStatus: $('jump-status'), jumpValue: $('jump-value'), jumpDetail: $('jump-detail'),
+  jump: $('jump'), jumpChart: $('jump-chart'), jumpMode: $('jump-mode'), jumpStatus: $('jump-status'), jumpValue: $('jump-value'), jumpDetail: $('jump-detail'),
   jumpDlg: $('jump-dlg'), optJump: $('opt-jump'), optUnits: $('opt-units'), optSpeak: $('opt-speak'),
   optHeightCm: $('opt-height-cm'), optHeightFt: $('opt-height-ft'), optHeightIn: $('opt-height-in'),
   jumpHowto: $('jump-howto'), jumpHistory: $('jump-history'), jumpList: $('jump-list'), jumpClear: $('jump-clear'),
@@ -374,6 +374,16 @@ function drawJump(width, mirror, unit) {
 
   const marks = state.lastJump?.marks;
   if (!marks) return;
+
+  // The path the hips took through the air.
+  const path = state.lastJump.pathPx;
+  ctx.strokeStyle = '#4f8cff';
+  ctx.lineWidth = unit * 1.2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  path.forEach((p, i) => (i ? ctx.lineTo(mx(p.x), p.y) : ctx.moveTo(mx(p.x), p.y)));
+  ctx.stroke();
+
   ctx.strokeStyle = '#facc15';
   ctx.lineWidth = unit * 1.4;
   ctx.beginPath();
@@ -497,7 +507,7 @@ function onJumpUpdate({ phase, event, result }) {
       flightHeightM: result.flightHeightM,
       approximate: result.approximate,
     };
-    state.lastJump = { ...jump, marks: result.marks };
+    state.lastJump = { ...jump, marks: result.marks, peakMs: result.peakMs, path: result.path, pathPx: result.pathPx };
     jumpHistory = [jump, ...jumpHistory].slice(0, 100);
     localStorage.setItem('body-tracker-jumps', JSON.stringify(jumpHistory));
     say(formatJump(jump, true));
@@ -517,6 +527,11 @@ function renderJumpPanel() {
 
   const last = state.lastJump;
   el.jumpValue.textContent = last ? formatJump(last, false, mode) : '';
+  if (el.jumpChart.jump !== last) {
+    el.jumpChart.jump = last;
+    el.jumpChart.toggleAttribute('hidden', !last); // SVG elements have no .hidden property
+    if (last) renderJumpChart(last, mode);
+  }
   const past = jumpHistory.filter((j) => j.mode === mode);
   const details = [];
   if (last) details.push(`${(last.flightMs / 1000).toFixed(2)} s in the air`);
@@ -526,6 +541,36 @@ function renderJumpPanel() {
   }
   if (!settings.heightCm) details.push('estimate — enter your height for accuracy');
   el.jumpDetail.textContent = details.join(' · ');
+}
+
+/**
+ * The jump's arc: height of the hips above standing, against time (high jump) or against
+ * distance travelled (long jump). One series, so no legend; the peak is labelled directly.
+ */
+function renderJumpChart(jump, mode) {
+  const W = 320, H = 104, left = 10, right = 10, top = 22, bottom = 18;
+  const xOf = (p) => (mode === 'long' ? p.xM : p.tMs);
+  const xs = jump.path.map(xOf);
+  const x0 = Math.min(...xs);
+  const xSpan = Math.max(...xs) - x0 || 1;
+  const peak = jump.path.reduce((a, b) => (b.riseM > a.riseM ? b : a));
+  const yMax = Math.max(peak.riseM, 0.01);
+  const sx = (p) => left + ((xOf(p) - x0) / xSpan) * (W - left - right);
+  const sy = (p) => H - bottom - (Math.max(0, p.riseM) / yMax) * (H - top - bottom);
+  const points = jump.path.map((p) => `${sx(p).toFixed(1)},${sy(p).toFixed(1)}`).join(' ');
+  const px = sx(peak);
+  const anchor = px < 70 ? 'start' : px > W - 70 ? 'end' : 'middle';
+  const peakLabel = `peak ${formatHeight(peak.riseM, settings.units)} at ${(jump.peakMs / 1000).toFixed(2)} s`;
+  const base = H - bottom;
+  el.jumpChart.setAttribute('aria-label', `Arc of the jump: ${peakLabel}, ${(jump.flightMs / 1000).toFixed(2)} seconds in the air`);
+  el.jumpChart.innerHTML = `
+    <line class="axis" x1="${left}" y1="${base}" x2="${W - right}" y2="${base}"/>
+    <line class="drop" x1="${px}" y1="${sy(peak)}" x2="${px}" y2="${base}"/>
+    <polyline class="arc" points="${points}"/>
+    <circle class="peak" cx="${px}" cy="${sy(peak)}" r="4"/>
+    <text class="value" x="${px}" y="${sy(peak) - 9}" text-anchor="${anchor}">${peakLabel}</text>
+    <text x="${left}" y="${H - 4}">take-off</text>
+    <text x="${W - right}" y="${H - 4}" text-anchor="end">landing</text>`;
 }
 
 function renderJumpDialog() {

@@ -77,6 +77,8 @@ what converts pixels into real distances, so it needs to be right.
 2. Stand up straight and still for about a second. The app says "Ready" once it has
    found the floor line and your standing height.
 3. Jump. The result is shown, spoken, and saved to the history in the Jump dialog.
+   You also get the time in the air, the peak height and when it was reached, and a
+   graph of the jump's arc; the same arc is drawn over the video where you jumped.
 
 For a long jump with a run-up, stand still at the take-off spot first, then walk back
 and run; the floor line and scale are kept until you next stand still.
