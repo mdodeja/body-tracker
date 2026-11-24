@@ -89,6 +89,23 @@ async function samplePhoto() {
     check(json.frames.length === csv.length - 1 && json.frames[0].world.length === 33, 'JSON export matches CSV');
     await page.click('#export button.link');
 
+    // Jump mode: settings round-trip and the on-screen prompt. (The photo's subject is in a
+    // lunge, so the tracker must keep asking them to stand straight rather than arm itself.)
+    await page.click('#btn-jump');
+    await page.selectOption('#opt-units', 'imperial');
+    await page.selectOption('#opt-jump', 'long');
+    await page.fill('#opt-height-ft', '5');
+    await page.fill('#opt-height-in', '10');
+    await page.click('#jump-dlg button.primary');
+    await page.waitForFunction(() => document.getElementById('jump-status').textContent.includes('hold still'), null, { timeout: 15_000 });
+    check(await page.isVisible('#jump'), 'jump panel prompts the jumper to stand straight and still');
+    const heightM = await page.evaluate(() => window.bodyTracker.jumpTracker.heightM);
+    check(Math.abs(heightM - 1.778) < 0.001, 'height entered in feet and inches sets the scale');
+    await page.click('#btn-jump');
+    await page.selectOption('#opt-jump', 'off');
+    await page.click('#jump-dlg button.primary');
+    check(!(await page.isVisible('#jump')), 'jump panel hides when measuring is switched off');
+
     // Live camera path (Chromium's synthetic camera has no person in it).
     await page.click('#btn-camera');
     await page.waitForFunction(() => window.bodyTracker.source?.kind === 'camera' && window.bodyTracker.last, null, { timeout: 15_000 });

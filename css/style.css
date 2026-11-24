@@ -122,6 +122,29 @@ button:disabled { opacity: 0.45; cursor: default; }
 #angles th.l, #angles td.l { color: var(--left); text-align: right; min-width: 46px; }
 #angles th.r, #angles td.r { color: var(--right); text-align: right; min-width: 46px; padding-right: 0; }
 
+#jump {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 50px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(92vw, 360px);
+  padding: 10px 14px 12px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  text-align: center;
+  pointer-events: none;
+}
+#jump-mode { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+#jump-status { font-size: 16px; font-weight: 600; margin-top: 2px; }
+#jump.ready #jump-status { color: #4ade80; }
+#jump.air #jump-status { color: var(--right); }
+#jump-value { font-size: 52px; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+#jump-value:empty, #jump-detail:empty { display: none; }
+#jump-detail { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 #controls {
   position: absolute;
   left: 50%;
@@ -141,7 +164,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  width: 62px;
+  width: 56px;
   padding: 7px 0 5px;
   border: 0;
   border-radius: 12px;
@@ -187,4 +210,22 @@ dialog p { margin: 0; color: var(--muted); align-self: flex-start; }
 }
 .row small { display: block; color: var(--muted); font-size: 12px; }
 .row select { padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: #0b0f14; color: inherit; font: inherit; }
+.row > span:first-child { min-width: 0; }
+.height { display: flex; gap: 6px; flex: none; }
+.height input {
+  width: 64px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0b0f14;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+#jump-howto { font-size: 13px; }
+#jump-history { width: 100%; }
+#jump-history h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
+#jump-list { margin: 0; padding: 0; list-style: none; font-size: 14px; font-variant-numeric: tabular-nums; max-height: 132px; overflow-y: auto; }
+#jump-list li { display: flex; justify-content: space-between; padding: 3px 0; }
+#jump-list li span:last-child { color: var(--muted); }
 .row input[type='checkbox'] { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }

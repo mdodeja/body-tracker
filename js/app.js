@@ -1,6 +1,7 @@
 import { FilesetResolver, PoseLandmarker, HandLandmarker } from '../vendor/tasks-vision/vision_bundle.mjs';
 import { JOINTS, computeAngles, smoothAngles, sideOf } from './geometry.js';
 import { Recorder, download } from './recorder.js';
+import { JumpTracker, formatHeight, formatDistance } from './jump.js';
 
 const WASM_PATH = new URL('../vendor/tasks-vision/wasm', import.meta.url).href;
 const MODEL_PATHS = {
@@ -17,7 +18,11 @@ const el = {
   intro: $('intro'), introStart: $('intro-start'), introFile: $('intro-file'), introError: $('intro-error'),
   angles: $('angles'), angleRows: $('angle-rows'),
   btnCamera: $('btn-camera'), btnFlip: $('btn-flip'), btnRecord: $('btn-record'),
-  btnAngles: $('btn-angles'), btnSettings: $('btn-settings'),
+  btnAngles: $('btn-angles'), btnSettings: $('btn-settings'), btnJump: $('btn-jump'),
+  jump: $('jump'), jumpMode: $('jump-mode'), jumpStatus: $('jump-status'), jumpValue: $('jump-value'), jumpDetail: $('jump-detail'),
+  jumpDlg: $('jump-dlg'), optJump: $('opt-jump'), optUnits: $('opt-units'), optSpeak: $('opt-speak'),
+  optHeightCm: $('opt-height-cm'), optHeightFt: $('opt-height-ft'), optHeightIn: $('opt-height-in'),
+  jumpHowto: $('jump-howto'), jumpHistory: $('jump-history'), jumpList: $('jump-list'), jumpClear: $('jump-clear'),
   settings: $('settings'), optModel: $('opt-model'), optHands: $('opt-hands'), optLabels: $('opt-labels'),
   btnFile: $('btn-file'), file: $('file'),
   exportDlg: $('export'), exportSummary: $('export-summary'), exportCsv: $('export-csv'), exportJson: $('export-json'),
@@ -25,12 +30,18 @@ const el = {
 const ctx = el.view.getContext('2d');
 
 const settings = Object.assign(
-  { model: 'lite', hands: false, labels: true, angles: true, facing: 'user' },
+  {
+    model: 'lite', hands: false, labels: true, angles: true, facing: 'user',
+    jumpMode: 'off', heightCm: null, speak: true,
+    units: /^en-(US|LR|MM)$/.test(navigator.language) ? 'imperial' : 'metric',
+  },
   JSON.parse(localStorage.getItem('body-tracker-settings') || '{}'),
 );
 const saveSettings = () => localStorage.setItem('body-tracker-settings', JSON.stringify(settings));
 
 const recorder = new Recorder();
+const jumpTracker = new JumpTracker({ heightM: settings.heightCm ? settings.heightCm / 100 : null });
+let jumpHistory = JSON.parse(localStorage.getItem('body-tracker-jumps') || '[]');
 const state = {
   fileset: null,
   pose: null,
@@ -46,6 +57,9 @@ const state = {
   angles: null,
   wakeLock: null,
   last: null, // summary of the most recent frame, exposed for debugging and tests
+  jumpPhase: 'searching',
+  lastJump: null, // most recent jump result, drawn over the video until the next take-off
+  jumpTracker,
 };
 window.bodyTracker = state;
 
@@ -155,6 +169,8 @@ function begin() {
   state.running = true;
   state.lastVideoTime = -1;
   state.angles = null;
+  state.lastJump = null;
+  jumpTracker.reset();
   el.intro.hidden = true;
   el.stats.hidden = false;
   requestWakeLock();
@@ -244,6 +260,13 @@ function tick(now) {
   recorder.add({ landmarks, world, angles: rawAngles, hands });
   state.last = { poseCount: poseResult.landmarks.length, landmarks, angles: rawAngles, hands };
 
+  if (settings.jumpMode !== 'off') {
+    // For a video file use the video's own clock, so slow processing does not stretch time.
+    const jumpTime = src.kind === 'video' ? frame.currentTime * 1000 : now;
+    const pixels = landmarks?.map((p) => ({ x: p.x * width, y: p.y * height, visibility: p.visibility })) ?? null;
+    onJumpUpdate(jumpTracker.update(jumpTime, pixels, world, rawAngles));
+  }
+
   draw(frame, width, height, src.mirror, landmarks, hands);
   updateReadouts(Boolean(landmarks));
 }
@@ -332,6 +355,47 @@ function draw(frame, width, height, mirror, pose, hands) {
   }
 
   if (pose && settings.labels && state.angles) drawAngleLabels(pose, unit, px, py);
+  if (settings.jumpMode !== 'off') drawJump(width, mirror, unit);
+}
+
+/** Floor line while armed, plus the last jump's measurement drawn where it happened. */
+function drawJump(width, mirror, unit) {
+  const cal = jumpTracker.cal;
+  if (!cal) return;
+  const mx = (x) => (mirror ? width - x : x);
+  ctx.lineWidth = unit * 0.7;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+  ctx.setLineDash([unit * 3, unit * 3]);
+  ctx.beginPath();
+  ctx.moveTo(0, cal.ground);
+  ctx.lineTo(width, cal.ground);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const marks = state.lastJump?.marks;
+  if (!marks) return;
+  ctx.strokeStyle = '#facc15';
+  ctx.lineWidth = unit * 1.4;
+  ctx.beginPath();
+  if (settings.jumpMode === 'long') {
+    const tick = unit * 5;
+    for (const x of [marks.takeoffX, marks.landingX]) {
+      ctx.moveTo(mx(x), marks.groundY - tick);
+      ctx.lineTo(mx(x), marks.groundY + tick);
+    }
+    ctx.moveTo(mx(marks.takeoffX), marks.groundY);
+    ctx.lineTo(mx(marks.landingX), marks.groundY);
+  } else {
+    const x = mx(marks.peakX);
+    const tick = unit * 8;
+    for (const y of [marks.standingHipY, marks.peakY]) {
+      ctx.moveTo(x - tick, y);
+      ctx.lineTo(x + tick, y);
+    }
+    ctx.moveTo(x, marks.standingHipY);
+    ctx.lineTo(x, marks.peakY);
+  }
+  ctx.stroke();
 }
 
 function drawAngleLabels(pose, unit, px, py) {
@@ -390,6 +454,123 @@ function updateReadouts(tracking) {
   if (recorder.active) el.recTime.textContent = `● ${formatDuration(performance.now() - recorder.startedAt)}`;
 }
 
+// ---------------------------------------------------------------- jump measurement
+
+const JUMP_TEXT = {
+  high: {
+    title: 'High jump',
+    howto: 'Prop the phone up so your whole body is in view with room above your head. Stand up straight and still for a second, then jump as high as you can.',
+  },
+  long: {
+    title: 'Long jump',
+    howto: 'Prop the phone up side-on, so you jump across the screen and both take-off and landing are in view. Stand up straight and still at the take-off spot for a second, then jump — or walk back first for a run-up.',
+  },
+};
+const JUMP_STATUS = {
+  searching: 'Step back until your whole body is in view',
+  steady: 'Stand up straight and hold still',
+  ready: 'Ready — jump!',
+  air: 'In the air…',
+};
+
+const jumpValue = (jump, mode = jump.mode) => (mode === 'long' ? jump.distanceM : jump.riseM);
+const formatJump = (jump, spoken = false, mode = jump.mode) =>
+  (mode === 'long' ? formatDistance : formatHeight)(jumpValue(jump, mode), settings.units, spoken);
+
+function say(text) {
+  if (!settings.speak || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+function onJumpUpdate({ phase, event, result }) {
+  state.jumpPhase = phase;
+  if (event === 'calibrated') say('Ready');
+  if (event === 'takeoff') state.lastJump = null;
+  if (event === 'result') {
+    const jump = {
+      at: new Date().toISOString(),
+      mode: settings.jumpMode,
+      riseM: result.riseM,
+      distanceM: result.distanceM,
+      flightMs: Math.round(result.flightMs),
+      flightHeightM: result.flightHeightM,
+      approximate: result.approximate,
+    };
+    state.lastJump = { ...jump, marks: result.marks };
+    jumpHistory = [jump, ...jumpHistory].slice(0, 100);
+    localStorage.setItem('body-tracker-jumps', JSON.stringify(jumpHistory));
+    say(formatJump(jump, true));
+  }
+  renderJumpPanel();
+}
+
+function renderJumpPanel() {
+  const mode = settings.jumpMode;
+  const show = mode !== 'off' && Boolean(state.source);
+  el.jump.hidden = !show;
+  if (!show) return;
+  const phase = state.jumpPhase;
+  el.jump.className = phase;
+  el.jumpMode.textContent = JUMP_TEXT[mode].title;
+  el.jumpStatus.textContent = JUMP_STATUS[phase];
+
+  const last = state.lastJump;
+  el.jumpValue.textContent = last ? formatJump(last, false, mode) : '';
+  const past = jumpHistory.filter((j) => j.mode === mode);
+  const details = [];
+  if (last) details.push(`${(last.flightMs / 1000).toFixed(2)} s in the air`);
+  if (past.length) {
+    const best = past.reduce((a, b) => (jumpValue(b) > jumpValue(a) ? b : a));
+    details.push(`best ${formatJump(best)}`);
+  }
+  if (!settings.heightCm) details.push('estimate — enter your height for accuracy');
+  el.jumpDetail.textContent = details.join(' · ');
+}
+
+function renderJumpDialog() {
+  const mode = el.optJump.value;
+  const imperial = el.optUnits.value === 'imperial';
+  el.optHeightCm.hidden = imperial;
+  el.optHeightFt.hidden = el.optHeightIn.hidden = !imperial;
+  $('height-label').textContent = imperial ? 'Your height (ft, in)' : 'Your height (cm)';
+  el.jumpHowto.textContent = JUMP_TEXT[mode]?.howto ?? '';
+  el.jumpHowto.hidden = mode === 'off';
+
+  el.jumpHistory.hidden = !jumpHistory.length;
+  el.jumpList.replaceChildren(
+    ...jumpHistory.slice(0, 20).map((jump) => {
+      const li = document.createElement('li');
+      const value = document.createElement('span');
+      value.textContent = `${JUMP_TEXT[jump.mode].title} · ${formatJump(jump)}${jump.approximate ? ' (est.)' : ''}`;
+      const when = document.createElement('span');
+      when.textContent = new Date(jump.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      li.append(value, when);
+      return li;
+    }),
+  );
+}
+
+function showHeight() {
+  const cm = settings.heightCm;
+  el.optHeightCm.value = cm ? Math.round(cm) : '';
+  const inches = cm ? Math.round(cm / 2.54) : null;
+  el.optHeightFt.value = inches ? Math.floor(inches / 12) : '';
+  el.optHeightIn.value = inches ? inches % 12 : '';
+}
+
+function readHeight() {
+  const cm =
+    el.optUnits.value === 'imperial'
+      ? (Number(el.optHeightFt.value) * 12 + Number(el.optHeightIn.value)) * 2.54
+      : Number(el.optHeightCm.value);
+  const valid = cm >= 80 && cm <= 250 ? cm : null;
+  if (valid === settings.heightCm) return;
+  settings.heightCm = valid;
+  jumpTracker.setHeight(valid ? valid / 100 : null);
+  state.lastJump = null;
+}
+
 function setStatus(text) {
   if (el.status.textContent !== text) el.status.textContent = text;
 }
@@ -410,6 +591,8 @@ function syncUi() {
   el.recTime.hidden = !recorder.active;
   el.btnAngles.classList.toggle('on', settings.angles);
   el.angles.hidden = !(settings.angles && active);
+  el.btnJump.classList.toggle('on', settings.jumpMode !== 'off');
+  renderJumpPanel();
 }
 
 function startRecording() {
@@ -467,6 +650,42 @@ el.btnAngles.onclick = () => {
   syncUi();
 };
 el.btnSettings.onclick = () => el.settings.showModal();
+
+el.btnJump.onclick = () => {
+  el.optJump.value = settings.jumpMode;
+  el.optUnits.value = settings.units;
+  el.optSpeak.checked = settings.speak;
+  showHeight();
+  renderJumpDialog();
+  el.jumpDlg.showModal();
+};
+el.optJump.onchange = renderJumpDialog;
+el.optUnits.onchange = () => {
+  readHeight(); // keep what was typed, in the units it was typed in
+  settings.units = el.optUnits.value;
+  showHeight();
+  renderJumpDialog();
+};
+el.jumpClear.onclick = () => {
+  jumpHistory = [];
+  localStorage.removeItem('body-tracker-jumps');
+  renderJumpDialog();
+};
+el.jumpDlg.onclose = () => {
+  readHeight();
+  if (settings.jumpMode !== el.optJump.value) {
+    settings.jumpMode = el.optJump.value;
+    state.lastJump = null;
+    jumpTracker.reset();
+    state.jumpPhase = 'searching';
+  }
+  settings.units = el.optUnits.value;
+  settings.speak = el.optSpeak.checked;
+  saveSettings();
+  // Phones only allow speech after a tap; this tap unlocks it for the results to come.
+  if (settings.speak && settings.jumpMode !== 'off') say(JUMP_TEXT[settings.jumpMode].title);
+  syncUi();
+};
 el.introFile.onclick = el.btnFile.onclick = () => el.file.click();
 el.file.onchange = () => {
   const file = el.file.files[0];
