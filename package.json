@@ -1,0 +1,12 @@
+{
+  "name": "body-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "On-device body and joint tracking for phone browsers",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "node tests/e2e.cjs"
+  }
+}

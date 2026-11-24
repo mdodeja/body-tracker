@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b0f14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Body Tracker</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main id="stage">
+    <canvas id="view" aria-label="Camera view with tracked skeleton"></canvas>
+    <video id="cam" playsinline muted></video>
+
+    <header id="hud">
+      <span id="status" class="chip">Loading…</span>
+      <span id="stats" class="chip" hidden></span>
+      <span id="rec-time" class="chip rec" hidden></span>
+    </header>
+
+    <section id="intro">
+      <h1>Body Tracker</h1>
+      <p>Tracks 33 body joints (plus fingers, optionally) from your camera. Everything runs on this device — no video ever leaves it.</p>
+      <button id="intro-start" class="primary" disabled>Start camera</button>
+      <button id="intro-file" class="link" disabled>or analyse a video / photo</button>
+      <p id="intro-error" class="error" hidden></p>
+    </section>
+
+    <aside id="angles" hidden>
+      <table>
+        <thead><tr><th>Joint</th><th class="l">Left</th><th class="r">Right</th></tr></thead>
+        <tbody id="angle-rows"></tbody>
+      </table>
+    </aside>
+
+    <nav id="controls">
+      <button id="btn-camera" title="Start or stop the camera" disabled>
+        <svg viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span>Camera</span>
+      </button>
+      <button id="btn-flip" title="Switch between front and back camera" disabled>
+        <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/></svg><span>Flip</span>
+      </button>
+      <button id="btn-record" title="Record joint data" disabled>
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle class="dot" cx="12" cy="12" r="4"/></svg><span>Record</span>
+      </button>
+      <button id="btn-angles" title="Show joint angles">
+        <svg viewBox="0 0 24 24"><path d="M4 20h16M4 20 16 5"/><path d="M11 20a7 7 0 0 0-2.2-5.1"/></svg><span>Angles</span>
+      </button>
+      <button id="btn-settings" title="Settings">
+        <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span>Settings</span>
+      </button>
+    </nav>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <label class="row">
+        <span>Accuracy<small>Higher accuracy is slower on older phones</small></span>
+        <select id="opt-model">
+          <option value="lite">Fast</option>
+          <option value="full">Accurate</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>Track fingers<small>Adds 21 points per hand; lowers frame rate</small></span>
+        <input id="opt-hands" type="checkbox">
+      </label>
+      <label class="row">
+        <span>Angle labels on body<small>Show degrees next to each joint</small></span>
+        <input id="opt-labels" type="checkbox" checked>
+      </label>
+      <button id="btn-file" type="button" class="secondary">Analyse a video or photo…</button>
+      <input id="file" type="file" accept="video/*,image/*" hidden>
+      <button class="primary">Done</button>
+    </form>
+  </dialog>
+
+  <dialog id="export">
+    <form method="dialog">
+      <h2>Recording saved</h2>
+      <p id="export-summary"></p>
+      <button id="export-csv" type="button" class="primary">Download CSV (spreadsheet)</button>
+      <button id="export-json" type="button" class="secondary">Download JSON (full data)</button>
+      <button class="link">Close</button>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
