@@ -9,7 +9,6 @@ export const median = (values) => {
   const mid = s.length >> 1;
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 };
-const range = (values) => Math.max(...values) - Math.min(...values);
 const vis = (p) => p?.visibility ?? 1;
 
 /** Reduce one pose (pixel coordinates, y pointing down) to the few numbers the tracker needs. */
@@ -75,11 +74,18 @@ export class StanceDetector {
     const bodyPx = ground - median(w.map((s) => s.eyeY));
     if (!(bodyPx > 0)) return null;
     const tolerance = 0.02 * bodyPx;
+    // Landmarks jitter, and now and then one frame is well off. Judge stillness on the
+    // spread of the middle 80% of readings, so a single stray frame does not restart the wait.
+    const spread = (values) => {
+      const sorted = [...values].sort((x, y) => x - y);
+      const cut = Math.floor(sorted.length * 0.1);
+      return sorted[sorted.length - 1 - cut] - sorted[cut];
+    };
     const still =
-      w.every((s) => s.straight) &&
-      range(w.map((s) => s.hipX)) < tolerance &&
-      range(w.map((s) => s.hipY)) < tolerance &&
-      range(w.map((s) => s.lowestFoot)) < tolerance;
+      w.filter((s) => s.straight).length >= 0.9 * w.length &&
+      spread(w.map((s) => s.hipX)) < tolerance &&
+      spread(w.map((s) => s.hipY)) < tolerance &&
+      spread(w.map((s) => s.lowestFoot)) < 1.5 * tolerance; // feet are the jumpiest landmarks
     if (!still) return null;
 
     const worldEye = w.map((s) => s.worldEyeToFloor).filter((v) => v > 0);

@@ -157,7 +157,7 @@ export class JumpTracker {
     air.highestFoot = Math.min(air.highestFoot ?? Infinity, m.lowestFoot);
     air.feet.push({ t, y: m.lowestFoot });
     let rest = air.feet.length - 1;
-    while (rest > 0 && Math.abs(air.feet[rest - 1].y - m.lowestFoot) < 0.4 * cal.threshold) rest--;
+    while (rest > 0 && Math.abs(air.feet[rest - 1].y - m.lowestFoot) < 0.6 * cal.threshold) rest--;
     const stalled =
       t - air.feet[rest].t >= 120 &&
       m.lowestFoot > air.highestFoot + cal.threshold &&
@@ -171,7 +171,9 @@ export class JumpTracker {
       const landedAt = touched ? (air.lastAirT + t) / 2 : (air.feet[Math.max(0, rest - 1)].t + air.feet[rest].t) / 2;
       // Wait one more frame before reading the landing position: on the touchdown frame
       // the feet can still be a few centimetres short of where they plant.
-      air.touch = { t, y: m.lowestFoot, flightMs: this.#flightTime(landedAt - air.tOff) };
+      air.touch = { t, landedAt, y: m.lowestFoot, flightMs: this.#flightTime(landedAt - air.tOff) };
+      // Feet found at rest have been on the floor a while: drop that from the arc.
+      air.path = air.path.filter((p) => p.t <= landedAt + 1);
       if (touched) return { phase: this.phase };
     } else if (m.lowestFoot - air.touch.y > 0.5 * cal.threshold) {
       // Still falling: the landing spot is lower in the picture than the take-off spot, and
@@ -185,7 +187,7 @@ export class JumpTracker {
     if (flightMs < MIN_FLIGHT_MS) return this.#endAir();
     // A bumped or hand-held phone also makes the body leap up the picture and come back.
     // Only something actually falling under gravity counts as a jump.
-    if (!this.#fallsLikeAJump(air.touch.t)) return this.#endAir();
+    if (!this.#fallsLikeAJump(air.touch.landedAt)) return this.#endAir();
 
     const dir = Math.sign(m.hipX - air.hipX0) || 1;
     const takeoffX = dir * Math.max(...air.takeoffFeetX.map((x) => dir * x));
