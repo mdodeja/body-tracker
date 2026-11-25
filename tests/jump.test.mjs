@@ -157,6 +157,47 @@ test('walking toward or away from the camera is not a jump', () => {
   }
 });
 
+test('camera shake is not a jump', () => {
+  // The whole picture lurches: everything, feet included, shifts up and comes back.
+  const shakes = {
+    'a knock (sudden shift, held, sudden return)': (ms) => (ms < 300 ? 60 : 0),
+    'a slow tilt up and back': (ms) => 80 * Math.sin((Math.PI * Math.min(ms, 1200)) / 1200),
+    'a sharp jolt': (ms) => (ms < 250 ? 150 * Math.sin((Math.PI * ms) / 250) ** 0.3 : 0),
+    'a wobble': (ms) => (ms < 900 ? 35 * Math.abs(Math.sin((Math.PI * ms) / 150)) : 0),
+  };
+  for (const [name, shift] of Object.entries(shakes)) {
+    const tracker = new JumpTracker({ heightM: HEIGHT_M });
+    let t = 0;
+    for (; t < 1500; t += 33) tracker.update(t, pose(500), null, STRAIGHT);
+    const events = [];
+    for (const t0 = t; t < t0 + 2500; t += 33) {
+      const out = tracker.update(t, pose(500, shift(t - t0)), null, STRAIGHT);
+      if (out.event) events.push(out.event);
+    }
+    assert.ok(!events.includes('result'), `${name}: ${events}`);
+    // And a real jump straight afterwards is still measured.
+    const flightS = Math.sqrt((8 * 0.4) / G);
+    let result;
+    for (const t0 = t - 16; !result && t < t0 + 1500; t += 33) {
+      const s = Math.min((t - t0) / 1000, flightS);
+      result = tracker.update(t, pose(500, 0.5 * G * s * (flightS - s) * SCALE)).result;
+    }
+    assert.ok(result && Math.abs(result.riseM - 0.4) < 0.03, `${name}: real jump afterwards gave ${result?.riseM}`);
+  }
+});
+
+test('interrupt() abandons a jump in progress but keeps the calibration', () => {
+  const tracker = new JumpTracker({ heightM: HEIGHT_M });
+  let t = 0;
+  for (; t < 1500; t += 33) tracker.update(t, pose(500), null, STRAIGHT);
+  tracker.update(t, pose(500, 10));
+  assert.equal(tracker.update((t += 33), pose(500, 60)).phase, 'air');
+  tracker.interrupt();
+  assert.equal(tracker.phase, 'ready');
+  assert.ok(tracker.cal);
+  for (let i = 0; i < 30; i++) assert.equal(tracker.update((t += 33), pose(500), null, STRAIGHT).event === 'result', false);
+});
+
 test('reports no dip for a jump straight from standing', () => {
   const { result } = simulate(new JumpTracker({ heightM: HEIGHT_M }), { riseM: 0.4 });
   assert.equal(result.dipM, null);

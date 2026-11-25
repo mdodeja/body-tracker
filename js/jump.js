@@ -183,6 +183,9 @@ export class JumpTracker {
 
     const { flightMs } = air.touch;
     if (flightMs < MIN_FLIGHT_MS) return this.#endAir();
+    // A bumped or hand-held phone also makes the body leap up the picture and come back.
+    // Only something actually falling under gravity counts as a jump.
+    if (!this.#fallsLikeAJump(air.touch.t)) return this.#endAir();
 
     const dir = Math.sign(m.hipX - air.hipX0) || 1;
     const takeoffX = dir * Math.max(...air.takeoffFeetX.map((x) => dir * x));
@@ -215,6 +218,57 @@ export class JumpTracker {
     this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY, lowestFoot: m.lowestFoot };
     this.#endAir();
     return { phase: this.phase, event: 'result', result };
+  }
+
+  /**
+   * Was that free fall? In the air the hips follow a parabola whose curvature is set by
+   * gravity and nothing else, so fit one to their path and compare. The band is wide —
+   * the hips are not exactly the centre of mass, and tucking the legs shifts them — but
+   * camera shake, which has no reason to match gravity, mostly lands well outside it.
+   */
+  #fallsLikeAJump(landedT) {
+    const pts = this.air.path.filter((p) => p.t >= this.air.tOff && p.t <= landedT);
+    if (pts.length < 4) return false;
+    // Least-squares fit of y = a·s² + b·s + c, with s in seconds from the middle of the flight.
+    const t0 = pts[0].t;
+    const span = (pts[pts.length - 1].t - t0) / 1000;
+    const data = pts.map((p) => ({ s: (p.t - t0) / 1000 - span / 2, y: p.y }));
+    const sum = (f) => data.reduce((acc, d) => acc + f(d), 0);
+    const n = data.length;
+    const s1 = sum((d) => d.s), s2 = sum((d) => d.s ** 2), s3 = sum((d) => d.s ** 3), s4 = sum((d) => d.s ** 4);
+    const y0 = sum((d) => d.y), y1 = sum((d) => d.y * d.s), y2 = sum((d) => d.y * d.s ** 2);
+    // Solve the 3×3 normal equations by Cramer's rule.
+    const det = (m) =>
+      m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+    const D = det([s4, s3, s2, s3, s2, s1, s2, s1, n]);
+    if (!D) return false;
+    const a = det([y2, s3, s2, y1, s2, s1, y0, s1, n]) / D;
+    const b = det([s4, y2, s2, s3, y1, s1, s2, y0, n]) / D;
+    const c = det([s4, s3, y2, s3, s2, y1, s2, s1, y0]) / D;
+
+    // 1. Curvature matches gravity (y points down, so free fall has a = +g/2 in pixels).
+    const gravity = (G / 2) * this.cal.scale;
+    if (!(a > 0.4 * gravity && a < 2.2 * gravity)) return false;
+    // 2. The path really is that parabola, not a step or a wobble that averages out to one.
+    const mean = y0 / n;
+    const total = sum((d) => (d.y - mean) ** 2);
+    const residual = sum((d) => (d.y - (a * d.s * d.s + b * d.s + c)) ** 2);
+    if (!(total > 0) || 1 - residual / total < 0.85) return false;
+    // 3. It peaks around the middle: up for about as long as down.
+    const apex = -b / (2 * a) / span; // -0.5 at take-off, +0.5 at landing
+    return Math.abs(apex) < 0.3;
+  }
+
+  /**
+   * Call when the phone itself is being moved: nothing seen meanwhile can be trusted.
+   * Drops any jump in progress and the short-term floor tracking; calibration is kept.
+   */
+  interrupt() {
+    if (this.air) this.#endAir();
+    this.stance.clear();
+    this.groundFeet = [];
+    this.groundHips = [];
+    this.lastGround = this.prevGround = null;
   }
 
   /**

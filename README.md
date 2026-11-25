@@ -90,6 +90,11 @@ jumps. The floor line follows your feet, so landing a step nearer to or farther 
 the phone does not throw off the next jump. Standing still again simply refreshes
 the scale.
 
+The phone has to stay put while measuring. If it is moved or knocked, the app says
+"Hold the phone still" and ignores what it sees until it settles (it uses the phone's
+motion sensor for this — an iPhone asks permission the first time). As a second line of
+defence, something only counts as a jump if the hips trace the arc gravity would give.
+
 For a long jump with a run-up, stand still at the take-off spot first, then walk back
 and run; the floor line and scale are kept until you next stand still.
 

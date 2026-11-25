@@ -24,6 +24,11 @@ export class DistanceTracker {
     this.stance.clear();
   }
 
+  /** Call when the phone itself is being moved: start the standing-still count again. */
+  interrupt() {
+    this.stance.clear();
+  }
+
   /** @returns {{phase: string, event?: 'marked'|'result', result?: object}} */
   update(t, px, world = null, angles = null) {
     if (t < this.lastT) this.reset();
@@ -95,6 +100,13 @@ export class SprintTracker {
     this.armed = false;
     this.lastT = -Infinity;
     this.stance.holdMs = 800;
+    this.stance.clear();
+  }
+
+  /** Call when the phone itself is being moved: abandon any run in progress. */
+  interrupt() {
+    if (this.run) this.#endRun();
+    this.samples = [];
     this.stance.clear();
   }
 

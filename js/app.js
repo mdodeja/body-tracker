@@ -271,7 +271,12 @@ function tick(now) {
   recorder.add({ landmarks, world, angles: rawAngles, hands });
   state.last = { poseCount: poseResult.landmarks.length, landmarks, angles: rawAngles, hands };
 
-  if (settings.jumpMode !== 'off') {
+  if (settings.jumpMode !== 'off' && src.kind === 'camera' && phoneIsMoving(now)) {
+    // The picture is sliding around: anything "measured" now would be the phone, not the athlete.
+    trackers[settings.jumpMode].interrupt();
+    state.jumpPhase = 'moving';
+    renderJumpPanel();
+  } else if (settings.jumpMode !== 'off') {
     // For a video file use the video's own clock, so slow processing does not stretch time.
     const jumpTime = src.kind === 'video' ? frame.currentTime * 1000 : now;
     const pixels = landmarks?.map((p) => ({ x: p.x * width, y: p.y * height, visibility: p.visibility })) ?? null;
@@ -522,6 +527,39 @@ function drawDistanceMarks(mx, unit) {
   ctx.stroke();
 }
 
+// ---------------------------------------------------------------- phone movement
+
+// The phone's own gyroscope says when it is being moved, which the camera picture alone
+// cannot tell apart from the athlete moving. Optional: without it the measuring still
+// works, relying on the trackers' own checks.
+const phoneMotion = { listening: false, movedAt: -Infinity };
+const PHONE_MOVING_DEG_PER_S = 8; // well above a steady hand's tremor, well below a real knock or pan
+const PHONE_SETTLE_MS = 400;
+
+function watchPhoneMotion() {
+  if (phoneMotion.listening || typeof DeviceMotionEvent === 'undefined') return;
+  const listen = () => {
+    phoneMotion.listening = true;
+    window.addEventListener('devicemotion', (e) => {
+      const r = e.rotationRate;
+      if (!r || r.alpha == null) return;
+      if (Math.hypot(r.alpha, r.beta ?? 0, r.gamma ?? 0) > PHONE_MOVING_DEG_PER_S) phoneMotion.movedAt = performance.now();
+    });
+  };
+  try {
+    // iPhones ask the user first, and only in response to a tap.
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().then((answer) => answer === 'granted' && listen(), () => {});
+    } else {
+      listen();
+    }
+  } catch {
+    /* no motion sensor access: carry on without it */
+  }
+}
+
+const phoneIsMoving = (now) => now - phoneMotion.movedAt < PHONE_SETTLE_MS;
+
 // ---------------------------------------------------------------- measuring: jumps, sprint, distance
 
 const JUMP_TEXT = {
@@ -629,10 +667,10 @@ function renderJumpPanel() {
   if (!show) return;
   const phase = state.jumpPhase;
   const blocked = mode === 'sprint' && phase === 'set' && sprintTracker.lines && !sprintTracker.lines.fits;
-  el.jump.className = blocked ? 'blocked' : phase;
+  el.jump.className = blocked || phase === 'moving' ? 'blocked' : phase;
   el.jumpMode.textContent = mode === 'sprint' ? `Sprint · ${formatDistance(settings.sprintM, settings.units)}` : JUMP_TEXT[mode].title;
   const statuses = mode === 'sprint' ? SPRINT_STATUS : mode === 'distance' ? DISTANCE_STATUS : JUMP_STATUS;
-  el.jumpStatus.textContent = blocked ? FINISH_OUT_OF_VIEW : statuses[phase] ?? '';
+  el.jumpStatus.textContent = blocked ? FINISH_OUT_OF_VIEW : phase === 'moving' ? 'Hold the phone still' : statuses[phase] ?? '';
 
   const last = state.lastJump;
   el.jumpValue.textContent = last ? formatJump(last, false, mode) : '';
@@ -852,6 +890,7 @@ async function run(action) {
 
 const toggleCamera = () =>
   run(async () => {
+    if (settings.jumpMode !== 'off') watchPhoneMotion(); // a tap, so iPhones may ask here too
     if (state.source?.kind === 'camera') {
       stopSource();
       showIntro();
@@ -917,6 +956,7 @@ el.jumpDlg.onclose = () => {
   settings.units = el.optUnits.value;
   settings.speak = el.optSpeak.checked;
   saveSettings();
+  if (settings.jumpMode !== 'off') watchPhoneMotion(); // inside the tap, as iPhones require
   // Phones only allow speech after a tap; this tap unlocks it for the results to come.
   if (settings.speak && settings.jumpMode !== 'off') say(JUMP_TEXT[settings.jumpMode].title);
   syncUi();
