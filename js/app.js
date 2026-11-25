@@ -532,33 +532,35 @@ function drawDistanceMarks(mx, unit) {
 // The phone's own gyroscope says when it is being moved, which the camera picture alone
 // cannot tell apart from the athlete moving. Optional: without it the measuring still
 // works, relying on the trackers' own checks.
-const phoneMotion = { listening: false, movedAt: -Infinity };
+const phoneMotion = { listening: false, asked: false, movedAt: -Infinity };
 const PHONE_MOVING_DEG_PER_S = 8; // well above a steady hand's tremor, well below a real knock or pan
 const PHONE_SETTLE_MS = 400;
 
 function watchPhoneMotion() {
-  if (phoneMotion.listening || typeof DeviceMotionEvent === 'undefined') return;
-  const listen = () => {
+  if (typeof DeviceMotionEvent === 'undefined') return;
+  if (!phoneMotion.listening) {
     phoneMotion.listening = true;
+    // If permission is missing the events simply never arrive, so listening is always safe.
     window.addEventListener('devicemotion', (e) => {
       const r = e.rotationRate;
       if (!r || r.alpha == null) return;
       if (Math.hypot(r.alpha, r.beta ?? 0, r.gamma ?? 0) > PHONE_MOVING_DEG_PER_S) phoneMotion.movedAt = performance.now();
     });
-  };
-  try {
-    // iPhones ask the user first, and only in response to a tap.
-    if (typeof DeviceMotionEvent.requestPermission === 'function') {
-      DeviceMotionEvent.requestPermission().then((answer) => answer === 'granted' && listen(), () => {});
-    } else {
-      listen();
+  }
+  // Some phones (iPhones, and newer browsers elsewhere) only deliver the events after the
+  // user has been asked, and only allow asking in response to a tap — which is when this runs.
+  if (!phoneMotion.asked && typeof DeviceMotionEvent.requestPermission === 'function') {
+    phoneMotion.asked = true;
+    try {
+      DeviceMotionEvent.requestPermission().catch(() => {});
+    } catch {
+      /* carry on without the sensor */
     }
-  } catch {
-    /* no motion sensor access: carry on without it */
   }
 }
 
 const phoneIsMoving = (now) => now - phoneMotion.movedAt < PHONE_SETTLE_MS;
+state.phoneMotion = phoneMotion; // exposed for debugging and tests
 
 // ---------------------------------------------------------------- measuring: jumps, sprint, distance
 
