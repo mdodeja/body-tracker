@@ -35,6 +35,8 @@ export class JumpTracker {
     this.lastGround = null;
     this.prevGround = null;
     this.groundHips = []; // recent hip heights while on the floor: the dip and push before a jump
+    this.groundFeet = []; // recent foot levels while on the floor: where the floor is right now
+    this.floorY = null;
     this.air = null;
     this.lastT = -Infinity;
   }
@@ -60,31 +62,48 @@ export class JumpTracker {
       return { phase: this.phase };
     }
 
-    if (this.cal && this.lastGround && m.lowestFoot < this.cal.ground - this.cal.threshold) {
+    // Where the floor is under the jumper right now. It is followed continuously, not fixed
+    // at calibration: landing a step nearer to or farther from the camera moves it up or
+    // down the picture, and the next jump has to be judged from where the feet actually are.
+    const floor = this.groundFeet.length >= 4 ? median(this.groundFeet.map((s) => s.y)) : null;
+    this.floorY = floor ?? this.cal?.ground ?? null;
+    const cleared = floor != null && this.cal && m.lowestFoot < floor - this.cal.threshold;
+    // A take-off is abrupt. Feet that creep up the picture are someone walking away.
+    const abrupt = this.lastGround && m.lowestFoot < this.lastGround.lowestFoot - 0.3 * (this.cal?.threshold ?? 0);
+    if (cleared && abrupt) {
       this.air = {
+        floor,
+        // Standing hip height carried over to this floor.
+        standingHipY: floor - (this.cal.ground - this.cal.hipY),
         tOff: (this.lastGround.t + t) / 2,
         lastAirT: t,
         takeoffFeetX: this.#takeoffFeetX(),
         pre: this.groundHips,
+        preFloor: this.groundFeet,
         hipX0: this.lastGround.hipX,
         hipY0: this.lastGround.hipY,
         recentHipY: [m.hipY],
-        recentFoot: [m.lowestFoot],
+        feet: [{ t, y: m.lowestFoot }],
         peakY: m.hipY,
         peakX: m.hipX,
-        peakT: t,
         // Hip positions through the jump, for drawing its arc.
         path: [{ t: this.lastGround.t, x: this.lastGround.hipX, y: this.lastGround.hipY }, { t, x: m.hipX, y: m.hipY }],
+        peakT: t,
       };
       this.groundHips = [];
+      this.groundFeet = [];
       this.stance.clear();
       this.phase = 'air';
       return { phase: this.phase, event: 'takeoff' };
     }
     this.prevGround = this.lastGround;
-    this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY };
+    this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY, lowestFoot: m.lowestFoot };
     this.groundHips.push({ t, y: m.hipY });
     while (t - this.groundHips[0].t > 2500) this.groundHips.shift();
+    this.groundFeet.push({ t, y: m.lowestFoot });
+    // Long enough to average out foot-landmark jitter (which feeds straight into the height),
+    // short enough to have settled between quick consecutive jumps.
+    while (t - this.groundFeet[0].t > 600) this.groundFeet.shift();
 
     const wasReady = this.phase === 'ready';
     const cal = this.stance.update(t, m, angles);
@@ -109,8 +128,8 @@ export class JumpTracker {
     const last = this.lastGround;
     const prev = this.prevGround;
     const frame = prev && last.t - prev.t < 100 ? prev : last;
-    const floor = this.cal.ground - this.cal.threshold;
-    const planted = frame.feet.filter((f) => f.bottom >= floor);
+    const level = (this.floorY ?? this.cal.ground) - this.cal.threshold;
+    const planted = frame.feet.filter((f) => f.bottom >= level);
     return (planted.length ? planted : frame.feet).flatMap((f) => f.xs);
   }
 
@@ -128,23 +147,37 @@ export class JumpTracker {
       air.peakT = t;
     }
     if (!air.touch) air.path.push({ t, x: m.hipX, y: m.hipY });
-    air.recentFoot = [...air.recentFoot.slice(-2), m.lowestFoot];
 
-    const touched = m.lowestFoot >= cal.ground - cal.threshold / 2;
-    // Fallback for a landing spot that sits higher in the picture than the take-off spot
-    // (tilted phone, sloping ground): the hips have come most of the way back down and the
-    // feet have stopped falling.
-    const descended = m.hipY >= air.peakY + 0.5 * (air.hipY0 - air.peakY);
-    const settled = air.recentFoot.length === 3 && Math.abs(air.recentFoot[2] - air.recentFoot[0]) < 0.3 * cal.threshold;
-    const stalled = t - air.tOff > MIN_FLIGHT_MS && descended && settled;
+    const touched = m.lowestFoot >= air.floor - cal.threshold / 2;
+    // A landing spot that sits higher in the picture than the take-off spot (farther from
+    // the camera, a tilted phone, sloping ground) never reaches the take-off floor line.
+    // There, landing shows as the feet coming to rest: down from their highest point and
+    // then level for a good tenth of a second. (At the top of a jump they are level too,
+    // but not yet down from their highest point.)
+    air.highestFoot = Math.min(air.highestFoot ?? Infinity, m.lowestFoot);
+    air.feet.push({ t, y: m.lowestFoot });
+    let rest = air.feet.length - 1;
+    while (rest > 0 && Math.abs(air.feet[rest - 1].y - m.lowestFoot) < 0.4 * cal.threshold) rest--;
+    const stalled =
+      t - air.feet[rest].t >= 120 &&
+      m.lowestFoot > air.highestFoot + cal.threshold &&
+      air.feet[rest].t - air.tOff > MIN_FLIGHT_MS / 2;
     if (!air.touch) {
       if (!touched && !stalled) {
         air.lastAirT = t;
         return { phase: this.phase };
       }
+      // Feet found at rest landed when the rest began, not now.
+      const landedAt = touched ? (air.lastAirT + t) / 2 : (air.feet[Math.max(0, rest - 1)].t + air.feet[rest].t) / 2;
       // Wait one more frame before reading the landing position: on the touchdown frame
       // the feet can still be a few centimetres short of where they plant.
-      air.touch = { t, flightMs: this.#flightTime((air.lastAirT + t) / 2 - air.tOff) };
+      air.touch = { t, y: m.lowestFoot, flightMs: this.#flightTime(landedAt - air.tOff) };
+      if (touched) return { phase: this.phase };
+    } else if (m.lowestFoot - air.touch.y > 0.5 * cal.threshold) {
+      // Still falling: the landing spot is lower in the picture than the take-off spot, and
+      // the feet only passed the old floor line on their way down. Keep going.
+      air.touch = null;
+      air.lastAirT = t;
       return { phase: this.phase };
     }
 
@@ -154,9 +187,14 @@ export class JumpTracker {
     const dir = Math.sign(m.hipX - air.hipX0) || 1;
     const takeoffX = dir * Math.max(...air.takeoffFeetX.map((x) => dir * x));
     const landingX = dir * Math.min(...m.feetX.map((x) => dir * x));
+    // If the landing spot is nearer to or farther from the camera than the take-off spot,
+    // the floor is at a different height in the picture at each end of the jump. Judge the
+    // height of the hips against the floor sliding evenly from one to the other.
+    const floorShift = m.lowestFoot - air.floor;
+    const standingAt = (when) => air.standingHipY + floorShift * Math.min(1, Math.max(0, (when - air.tOff) / flightMs));
     const result = {
       flightMs,
-      riseM: Math.max(0, cal.hipY - air.peakY) / cal.scale,
+      riseM: Math.max(0, standingAt(air.peakT) - air.peakY) / cal.scale,
       flightHeightM: (G * (flightMs / 1000) ** 2) / 8,
       distanceM: Math.max(0, dir * (landingX - takeoffX)) / cal.scale,
       approximate: cal.approximate,
@@ -167,14 +205,14 @@ export class JumpTracker {
       path: air.path.map((p) => ({
         tMs: Math.max(0, p.t - air.tOff),
         xM: (dir * (p.x - air.hipX0)) / cal.scale,
-        riseM: (cal.hipY - p.y) / cal.scale,
+        riseM: (standingAt(p.t) - p.y) / cal.scale,
       })),
       pathPx: air.path.map((p) => ({ x: p.x, y: p.y })),
       // Pixel positions, for drawing the measurement over the video.
-      marks: { takeoffX, landingX, groundY: cal.ground, peakX: air.peakX, peakY: air.peakY, standingHipY: cal.hipY },
+      marks: { takeoffX, landingX, groundY: air.floor, peakX: air.peakX, peakY: air.peakY, standingHipY: air.standingHipY },
     };
     this.prevGround = null;
-    this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY };
+    this.lastGround = { t, feet: m.feet, hipX: m.hipX, hipY: m.hipY, lowestFoot: m.lowestFoot };
     this.#endAir();
     return { phase: this.phase, event: 'result', result };
   }
@@ -188,8 +226,8 @@ export class JumpTracker {
    */
   #pushOff() {
     const none = { dipM: null, concentricMs: null, timeToTakeoffMs: null };
-    const { pre, tOff } = this.air;
-    const { hipY, scale } = this.cal;
+    const { pre, tOff, standingHipY: hipY } = this.air;
+    const { scale } = this.cal;
     if (pre.length < 3) return none;
     const lowestY = Math.max(...pre.map((s) => s.y));
     const dipM = (lowestY - hipY) / scale;

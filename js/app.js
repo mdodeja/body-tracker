@@ -381,8 +381,9 @@ function drawJump(width, mirror, unit) {
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
   ctx.setLineDash([unit * 3, unit * 3]);
   ctx.beginPath();
-  ctx.moveTo(0, cal.ground);
-  ctx.lineTo(width, cal.ground);
+  const floorY = jumpTracker.floorY ?? cal.ground; // follows the jumper's feet from jump to jump
+  ctx.moveTo(0, floorY);
+  ctx.lineTo(width, floorY);
   ctx.stroke();
   ctx.setLineDash([]);
 
@@ -591,7 +592,8 @@ function onJumpUpdate({ phase, event, result }) {
   if (event === 'set') say('Set');
   if (event === 'nofit') say('Finish line is out of view');
   if (event === 'marked') say('Marked');
-  if (event === 'takeoff' || event === 'start') state.lastJump = null;
+  // The last result stays up until the next one replaces it (a stray take-off must not wipe it).
+  if (event === 'start') state.lastJump = null;
   if (event === 'result' && mode === 'sprint') {
     const { timeMs, distanceM, avgMps, topMps, approximate } = result;
     saveResult({ at, mode, timeMs: Math.round(timeMs), distanceM, avgMps, topMps, approximate });

@@ -106,6 +106,57 @@ test('reads the dip and push before a countermovement jump', () => {
   assert.ok(Math.abs(result.takeoffMps - (G * flightS) / 2) < 0.25, `take-off speed ${result.takeoffMps}`);
 });
 
+test('measures jump after jump without standing still in between', () => {
+  // Each landing is a little nearer to or farther from the camera, which moves the floor
+  // up or down the picture. The jumper never stands still again after the first jump.
+  const tracker = new JumpTracker({ heightM: HEIGHT_M });
+  const dt = 1000 / FPS;
+  let t = 0;
+  for (; t < 1500; t += dt) tracker.update(t, pose(500), null, STRAIGHT);
+  const flightS = Math.sqrt((8 * 0.4) / G);
+  const results = [];
+  let floorShift = 0; // pixels the floor sits above where it was at calibration
+  for (const nextShift of [45, -30, 60, 0]) {
+    const t0 = t - dt / 2;
+    for (; ; t += dt) {
+      const s = (t - t0) / 1000;
+      if (s >= flightS) break;
+      const lift = 0.5 * G * s * (flightS - s) * SCALE + floorShift + (nextShift - floorShift) * (s / flightS);
+      const out = tracker.update(t, pose(500, lift));
+      if (out.result) results.push(out.result);
+    }
+    floorShift = nextShift;
+    // Land, sink into a crouch and come back up over 0.6 s — never still, never straight.
+    const tLand = t;
+    for (; t < tLand + 600; t += dt) {
+      const squat = 0.25 * Math.sin((Math.PI * (t - tLand)) / 600);
+      const out = tracker.update(t, pose(500, floorShift, { squat }), null, { ...STRAIGHT, left_knee: 120, right_knee: 120 });
+      if (out.result) results.push(out.result);
+    }
+  }
+  assert.equal(results.length, 4, `measured ${results.length} of 4 jumps`);
+  for (const r of results) {
+    assert.ok(Math.abs(r.flightMs - flightS * 1000) < 50, `flight ${r.flightMs} vs ${flightS * 1000}`);
+    assert.ok(Math.abs(r.riseM - 0.4) < 0.2, `rise ${r.riseM}`);
+  }
+  // From the second jump on, the rise is measured from the floor the jumper is actually on.
+  for (const r of results.slice(1)) assert.ok(Math.abs(r.riseM - 0.4) < 0.04, `rise ${r.riseM}`);
+});
+
+test('walking toward or away from the camera is not a jump', () => {
+  for (const drift of [120, -120]) { // floor slides down / up the picture, in px per second
+    const tracker = new JumpTracker({ heightM: HEIGHT_M });
+    let t = 0;
+    for (; t < 1500; t += 33) tracker.update(t, pose(500), null, STRAIGHT);
+    const events = [];
+    for (const t0 = t; t < t0 + 2000; t += 33) {
+      const out = tracker.update(t, pose(500, (drift * (t - t0)) / 1000), null, STRAIGHT);
+      if (out.event) events.push(out.event);
+    }
+    assert.ok(!events.includes('result'), `drift ${drift}: ${events}`);
+  }
+});
+
 test('reports no dip for a jump straight from standing', () => {
   const { result } = simulate(new JumpTracker({ heightM: HEIGHT_M }), { riseM: 0.4 });
   assert.equal(result.dipM, null);

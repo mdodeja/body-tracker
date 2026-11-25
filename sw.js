@@ -1,5 +1,5 @@
 // Offline support: after the first visit the app, runtime and models are all served from cache.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `shell-${VERSION}`;
 const HEAVY = `heavy-${VERSION}`; // wasm runtime + models: large and immutable per version
 
