@@ -1,5 +1,5 @@
 // Offline support: after the first visit the app, runtime and models are all served from cache.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL = `shell-${VERSION}`;
 const HEAVY = `heavy-${VERSION}`; // wasm runtime + models: large and immutable per version
 
@@ -11,6 +11,7 @@ const SHELL_FILES = [
   'js/geometry.js',
   'js/jump.js',
   'js/measure.js',
+  'js/punch.js',
   'js/stance.js',
   'js/recorder.js',
   'manifest.webmanifest',

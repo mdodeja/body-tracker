@@ -112,6 +112,12 @@ async function samplePhoto() {
     await page.waitForFunction(() => document.getElementById('jump-mode').textContent.startsWith('Sprint'));
     check((await page.innerText('#jump-status')).includes('start line'), 'sprint panel asks for a start position');
     await page.click('#btn-jump');
+    await page.selectOption('#opt-jump', 'punch');
+    await page.click('#jump-dlg button.primary');
+    await page.waitForFunction(() => document.getElementById('jump-mode').textContent === 'Punch speed');
+    check((await page.innerText('#jump-status')).includes('hold still'), 'punch panel waits for a standing calibration');
+
+    await page.click('#btn-jump');
     await page.selectOption('#opt-jump', 'distance');
     await page.click('#jump-dlg button.primary');
     await page.waitForFunction(() => document.getElementById('jump-status').textContent.includes('first spot'));

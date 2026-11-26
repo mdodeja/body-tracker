@@ -16,6 +16,7 @@ the first visit the app also works with no internet connection at all.
   (take-off toe to landing heel), read out loud after each jump
 - **Sprint timing**: start and finish lines a set distance apart, drawn on screen;
   gives your time, average speed and top speed
+- **Punch speed**: peak speed of the fist as the arm shoots out, and which hand
 - **Distance between two spots**: stand on one, then the other
 - Record a session and download it as CSV (angles + 3D joint positions per frame) or JSON (everything)
 - Analyse an existing video or photo instead of the live camera
@@ -58,6 +59,7 @@ There is no build step and there are no runtime dependencies.
 | `js/stance.js` | Standing-still detection: floor line and image scale |
 | `js/jump.js` | Jump detection and measurement |
 | `js/measure.js` | Sprint timing and distance between two spots |
+| `js/punch.js` | Punch speed |
 | `js/recorder.js` | Recording and CSV/JSON export |
 | `sw.js` | Service worker that caches the app and models for offline use |
 
@@ -152,6 +154,22 @@ screen — roughly 6 m away for a 5 m sprint.
 At 30 frames per second each line crossing is known to about a frame, so expect the
 time for a one-second sprint to be within a few percent. Top speed is the fastest
 0.3-second stretch.
+
+## Punch speed
+
+Choose *Punch speed*. Put the phone side-on, so the punch travels across the screen
+rather than toward the camera. Stand up straight and still with your whole body in view
+until you hear "Ready" (that sets the scale); after that take your stance and punch.
+
+Each punch shows the peak speed of the fist, which hand threw it, and how far the arm
+extended. A punch is a burst of wrist speed during which the wrist moves away from its
+shoulder — pulling the hand back, or the phone shaking, does not count.
+
+Treat the number as a way to compare your own punches, not as a radar reading. A punch
+lasts about a tenth of a second, which is three or four frames at 30 frames per second:
+each reading is the fist's average speed across one frame gap, so it falls short of the
+true peak (by up to roughly a quarter at 30 fps in simulation), and motion blur makes
+the wrist harder to follow. Speed toward or away from the camera is not seen at all.
 
 ## Measuring a distance
 

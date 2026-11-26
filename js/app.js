@@ -3,6 +3,7 @@ import { JOINTS, computeAngles, smoothAngles, sideOf } from './geometry.js';
 import { Recorder, download } from './recorder.js';
 import { JumpTracker, formatHeight, formatDistance } from './jump.js';
 import { DistanceTracker, SprintTracker, formatSpeed } from './measure.js';
+import { PunchTracker } from './punch.js';
 
 const WASM_PATH = new URL('../vendor/tasks-vision/wasm', import.meta.url).href;
 const MODEL_PATHS = {
@@ -47,9 +48,11 @@ const heightM = settings.heightCm ? settings.heightCm / 100 : null;
 const jumpTracker = new JumpTracker({ heightM });
 const sprintTracker = new SprintTracker({ heightM, distanceM: settings.sprintM });
 const distanceTracker = new DistanceTracker({ heightM });
+const punchTracker = new PunchTracker({ heightM });
+const allTrackers = [jumpTracker, sprintTracker, distanceTracker, punchTracker];
 // One tracker per measuring mode (settings.jumpMode); both jumps share one.
-const trackers = { high: jumpTracker, long: jumpTracker, sprint: sprintTracker, distance: distanceTracker };
-const resetTrackers = () => [jumpTracker, sprintTracker, distanceTracker].forEach((t) => t.reset());
+const trackers = { high: jumpTracker, long: jumpTracker, sprint: sprintTracker, distance: distanceTracker, punch: punchTracker };
+const resetTrackers = () => allTrackers.forEach((t) => t.reset());
 let jumpHistory = JSON.parse(localStorage.getItem('body-tracker-jumps') || '[]');
 const state = {
   fileset: null,
@@ -71,6 +74,7 @@ const state = {
   jumpTracker,
   sprintTracker,
   distanceTracker,
+  punchTracker,
 };
 window.bodyTracker = state;
 
@@ -380,6 +384,7 @@ function drawJump(width, mirror, unit) {
   const mx = (x) => (mirror ? width - x : x);
   if (settings.jumpMode === 'sprint') return drawSprintLines(mx, unit);
   if (settings.jumpMode === 'distance') return drawDistanceMarks(mx, unit);
+  if (settings.jumpMode === 'punch') return drawPunch(mx, unit);
   const cal = jumpTracker.cal;
   if (!cal) return;
   ctx.lineWidth = unit * 0.7;
@@ -507,6 +512,22 @@ function drawSprintLines(mx, unit) {
   if (lines.fits) post(lines.finishX, '#facc15', 'FINISH');
 }
 
+/** The path of the last punch: where the fist started and where it ended up. */
+function drawPunch(mx, unit) {
+  const marks = state.lastJump?.marks;
+  if (!marks) return;
+  ctx.strokeStyle = '#facc15';
+  ctx.fillStyle = '#facc15';
+  ctx.lineWidth = unit * 1.4;
+  ctx.beginPath();
+  ctx.moveTo(mx(marks.from.x), marks.from.y);
+  ctx.lineTo(mx(marks.to.x), marks.to.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(mx(marks.to.x), marks.to.y, unit * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 /** The spot last stood on, and the span of the last measurement. */
 function drawDistanceMarks(mx, unit) {
   const spot = distanceTracker.spot;
@@ -579,6 +600,10 @@ const JUMP_TEXT = {
     title: 'Sprint',
     howto: 'Prop the phone up side-on and far enough back that the whole run fits across the screen. Stand up straight and still on your start line until you hear "Set": the start and finish lines appear on screen, with the finish toward the side with more room. Then run — from the line, or walk back and run through it. To move the start line, stand still on the new spot for 3 seconds.',
   },
+  punch: {
+    title: 'Punch speed',
+    howto: 'Prop the phone up side-on, so the punch travels across the screen rather than toward the camera. Stand up straight and still with your whole body in view until you hear "Ready"; after that you can take your stance and punch. Each punch is read out. Phone cameras see only a handful of frames of a punch, so the reading is a little under the true peak — compare your own punches rather than treating it as a radar figure.',
+  },
   distance: {
     title: 'Distance',
     howto: 'Prop the phone up side-on. Stand up straight and still on the first spot until you hear "Marked", then walk to the second spot and stand still again. Stay the same distance from the phone at both spots. Each new spot is measured from the last one.',
@@ -597,6 +622,12 @@ const SPRINT_STATUS = {
   set: 'Lines set — go when ready',
   running: 'Go!',
 };
+const PUNCH_STATUS = {
+  searching: WHOLE_BODY,
+  steady: 'Stand up straight and hold still',
+  ready: 'Ready — punch!',
+  punching: 'Punch!',
+};
 const DISTANCE_STATUS = {
   searching: WHOLE_BODY,
   steady: 'Stand still on the first spot',
@@ -606,10 +637,11 @@ const FINISH_OUT_OF_VIEW = 'Finish line is out of view — move the phone back o
 
 /** What "better" means in each mode, for the personal best. Distance has none. */
 const jumpValue = (jump, mode = jump.mode) =>
-  ({ high: jump.riseM, long: jump.distanceM, sprint: jump.avgMps })[mode];
+  ({ high: jump.riseM, long: jump.distanceM, sprint: jump.avgMps, punch: jump.peakMps })[mode];
 
 function formatJump(jump, spoken = false, mode = jump.mode) {
   if (mode === 'sprint') return `${(jump.timeMs / 1000).toFixed(2)} ${spoken ? 'seconds' : 's'}`;
+  if (mode === 'punch') return formatSpeed(jump.peakMps, settings.units, spoken);
   if (mode === 'high') return formatHeight(jump.riseM, settings.units, spoken);
   return formatDistance(jump.distanceM, settings.units, spoken);
 }
@@ -645,6 +677,10 @@ function onJumpUpdate({ phase, event, result }) {
     const { timeMs, distanceM, avgMps, topMps, approximate } = result;
     saveResult({ at, mode, timeMs: Math.round(timeMs), distanceM, avgMps, topMps, approximate });
     say(`${formatJump(state.lastJump, true)}. ${formatSpeed(avgMps, settings.units, true)}`);
+  } else if (event === 'result' && mode === 'punch') {
+    const { hand, peakMps, extensionM, durationMs, approximate } = result;
+    saveResult({ at, mode, hand, peakMps, extensionM, durationMs: Math.round(durationMs), approximate }, { marks: result.marks });
+    say(formatJump(state.lastJump, true));
   } else if (event === 'result' && mode === 'distance') {
     saveResult({ at, mode, distanceM: result.distanceM, approximate: result.approximate }, { marks: result.marks });
     say(formatJump(state.lastJump, true));
@@ -678,7 +714,7 @@ function renderJumpPanel() {
   const blocked = mode === 'sprint' && phase === 'set' && sprintTracker.lines && !sprintTracker.lines.fits;
   el.jump.className = blocked || phase === 'moving' ? 'blocked' : phase;
   el.jumpMode.textContent = mode === 'sprint' ? `Sprint · ${formatDistance(settings.sprintM, settings.units)}` : JUMP_TEXT[mode].title;
-  const statuses = mode === 'sprint' ? SPRINT_STATUS : mode === 'distance' ? DISTANCE_STATUS : JUMP_STATUS;
+  const statuses = { sprint: SPRINT_STATUS, distance: DISTANCE_STATUS, punch: PUNCH_STATUS }[mode] ?? JUMP_STATUS;
   el.jumpStatus.textContent = blocked ? FINISH_OUT_OF_VIEW : phase === 'moving' ? 'Hold the phone still' : statuses[phase] ?? '';
 
   const last = state.lastJump;
@@ -702,6 +738,8 @@ function renderJumpPanel() {
   const details = [];
   if (last && mode === 'sprint') {
     details.push(`average ${formatSpeed(last.avgMps, settings.units)}`, `top ${formatSpeed(last.topMps, settings.units)}`);
+  } else if (last && mode === 'punch') {
+    details.push(`${last.hand} hand`, `${last.peakMps.toFixed(1)} m/s`, `reach ${formatHeight(last.extensionM, settings.units)}`);
   } else if (last && mode === 'long') {
     details.push(`${(last.flightMs / 1000).toFixed(2)} s in the air`);
   }
@@ -839,7 +877,7 @@ function readHeight() {
   const valid = cm >= 80 && cm <= 250 ? cm : null;
   if (valid === settings.heightCm) return;
   settings.heightCm = valid;
-  for (const tracker of [jumpTracker, sprintTracker, distanceTracker]) tracker.setHeight(valid ? valid / 100 : null);
+  for (const tracker of allTrackers) tracker.setHeight(valid ? valid / 100 : null);
   state.lastJump = null;
 }
 
