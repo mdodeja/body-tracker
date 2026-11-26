@@ -18,7 +18,14 @@ const MAX_FLIGHT_MS = 2500;
 // except peakAt, which is 0.5. Loose on purpose: real footage is noisy, the hips are not
 // the centre of mass, and the scale may be an estimate.
 const FIT_MIN_POINTS = 6; // fewer frames than this and a curve fit means nothing
-export const FIT = { rise: [0.25, 2], peakAt: [0.15, 0.85], curvature: [0.25, 2], r2: 0.6 };
+// In captured footage, jumps scored 0.83–1.15 on rise and curvature with the peak at
+// 0.46–0.59 and a fit of 0.93+; knocks, wobbles and tilts of the phone scored under 0.35
+// on rise and under 0.15 on curvature.
+export const FIT = { rise: [0.35, 2], peakAt: [0.2, 0.8], curvature: [0.3, 2], r2: 0.6 };
+// The feet must be seen clear of the floor for at least this long. Anything briefer is a
+// blip of a frame or two, which no check can tell from landmark jitter or a shaken phone
+// (it would be a hop of under ~7 cm).
+const MIN_SEEN_AIR_MS = 150;
 
 export class JumpTracker {
   /** @param {{heightM?: number|null}} options  heightM: the jumper's real height, for scale. */
@@ -176,7 +183,7 @@ export class JumpTracker {
       const landedAt = touched ? (air.lastAirT + t) / 2 : (air.feet[Math.max(0, rest - 1)].t + air.feet[rest].t) / 2;
       // Wait one more frame before reading the landing position: on the touchdown frame
       // the feet can still be a few centimetres short of where they plant.
-      air.touch = { t, landedAt, y: m.lowestFoot, flightMs: this.#flightTime(landedAt - air.tOff) };
+      air.touch = { t, landedAt, y: m.lowestFoot, seenMs: landedAt - air.tOff, flightMs: this.#flightTime(landedAt - air.tOff) };
       // Feet found at rest have been on the floor a while: drop that from the arc.
       air.path = air.path.filter((p) => p.t <= landedAt + 1);
       if (touched) return { phase: this.phase };
@@ -189,7 +196,7 @@ export class JumpTracker {
     }
 
     const { flightMs } = air.touch;
-    if (flightMs < MIN_FLIGHT_MS) return this.#endAir();
+    if (flightMs < MIN_FLIGHT_MS || air.touch.seenMs < MIN_SEEN_AIR_MS) return this.#endAir();
     // A bumped or hand-held phone also makes the body leap up the picture and come back.
     // Only something actually falling under gravity counts as a jump.
     if (!this.#fallsLikeAJump(air.touch.landedAt)) {
@@ -328,14 +335,13 @@ export class JumpTracker {
 
   /**
    * The feet only count as airborne above a clearance threshold, so the observed air time
-   * misses the moments spent rising to it and falling from it. Add those back, using the
-   * take-off speed implied by the flight time itself (v = g·T/2).
+   * misses the moments spent rising to it and falling from it. Add those back.
    */
   #flightTime(observedMs) {
-    const missedM = (1.5 * this.cal.threshold) / this.cal.scale; // full threshold up, half down
-    let T = observedMs / 1000;
-    for (let i = 0; i < 3; i++) T = observedMs / 1000 + missedM / ((G * T) / 2);
-    return T * 1000;
+    // Time spent above a height h in a flight of length T is sqrt(T² − 8h/g); invert that.
+    // h: the feet cross the full threshold going up and half of it coming down.
+    const h = (0.75 * this.cal.threshold) / this.cal.scale;
+    return Math.sqrt((observedMs / 1000) ** 2 + (8 * h) / G) * 1000;
   }
 
   #endAir() {
