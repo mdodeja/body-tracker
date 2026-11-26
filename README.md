@@ -87,7 +87,8 @@ what converts pixels into real distances, so it needs to be right.
    You also get the time in the air, the peak height and when it was reached, and a
    graph of the jump's arc; the same arc is drawn over the video where you jumped.
 
-You can jump again straight away — there is no need to reset or stand still between
+Tap **Try again** under a result to clear it off the screen and get the camera view
+back; the result stays in the history. You can also just jump again straight away — there is no need to reset or stand still between
 jumps. The floor line follows your feet, so landing a step nearer to or farther from
 the phone does not throw off the next jump. Standing still again simply refreshes
 the scale.

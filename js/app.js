@@ -24,7 +24,7 @@ const el = {
   jump: $('jump'), jumpChart: $('jump-chart'), jumpMode: $('jump-mode'), jumpStatus: $('jump-status'), jumpValue: $('jump-value'), jumpDetail: $('jump-detail'),
   jumpDlg: $('jump-dlg'), optJump: $('opt-jump'), optUnits: $('opt-units'), optSpeak: $('opt-speak'),
   optHeightCm: $('opt-height-cm'), optHeightFt: $('opt-height-ft'), optHeightIn: $('opt-height-in'),
-  jumpMetrics: $('jump-metrics'), optWeight: $('opt-weight'), rowWeight: $('row-weight'), weightLabel: $('weight-label'),
+  jumpAgain: $('jump-again'), jumpMetrics: $('jump-metrics'), optWeight: $('opt-weight'), rowWeight: $('row-weight'), weightLabel: $('weight-label'),
   optSprint: $('opt-sprint'), rowSprint: $('row-sprint'), sprintLabel: $('sprint-label'),
   jumpHowto: $('jump-howto'), jumpHistory: $('jump-history'), jumpList: $('jump-list'), jumpClear: $('jump-clear'),
   settings: $('settings'), optModel: $('opt-model'), optHands: $('opt-hands'), optLabels: $('opt-labels'),
@@ -718,6 +718,7 @@ function renderJumpPanel() {
   el.jumpStatus.textContent = blocked ? FINISH_OUT_OF_VIEW : phase === 'moving' ? 'Hold the phone still' : statuses[phase] ?? '';
 
   const last = state.lastJump;
+  el.jumpAgain.hidden = !last;
   el.jumpValue.textContent = last ? formatJump(last, false, mode) : '';
   const arc = last?.path ? last : null; // only jumps have an arc to chart
   if (el.jumpChart.jump !== arc) {
@@ -976,6 +977,13 @@ el.btnJump.onclick = () => {
   showWeight();
   renderJumpDialog();
   el.jumpDlg.showModal();
+};
+// Clears the result off the screen so the camera view is free for the next attempt. The
+// measuring stays armed (floor, scale and lines are kept), and the result is still in the history.
+el.jumpAgain.onclick = () => {
+  state.lastJump = null;
+  state.jumpNote = null;
+  renderJumpPanel();
 };
 el.optJump.onchange = renderJumpDialog;
 el.optUnits.onchange = () => {

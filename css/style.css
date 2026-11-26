@@ -150,6 +150,17 @@ button:disabled { opacity: 0.45; cursor: default; }
 #jump-chart .drop { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
 #jump-chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
 #jump-chart text.value { fill: var(--text); font-weight: 600; }
+/* The panel itself lets taps through to nothing; only its button is tappable. */
+#jump-again {
+  pointer-events: auto;
+  margin-top: 10px;
+  padding: 10px 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
 #jump-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
