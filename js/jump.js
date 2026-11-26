@@ -14,6 +14,11 @@ import { measure, median, StanceDetector } from './stance.js';
 export const G = 9.81;
 const MIN_FLIGHT_MS = 200; // shorter than this is a step or a running stride, not a jump
 const MAX_FLIGHT_MS = 2500;
+// What still counts as "falling like a jump" (see #fitArc). Each is 1.0 for ideal free fall
+// except peakAt, which is 0.5. Loose on purpose: real footage is noisy, the hips are not
+// the centre of mass, and the scale may be an estimate.
+const FIT_MIN_POINTS = 6; // fewer frames than this and a curve fit means nothing
+export const FIT = { rise: [0.25, 2], peakAt: [0.15, 0.85], curvature: [0.25, 2], r2: 0.6 };
 
 export class JumpTracker {
   /** @param {{heightM?: number|null}} options  heightM: the jumper's real height, for scale. */
@@ -233,50 +238,54 @@ export class JumpTracker {
    * camera shake, which has no reason to match gravity, mostly lands well outside it.
    */
   #fallsLikeAJump(landedT) {
-    const pts = this.air.path.filter((p) => p.t >= this.air.tOff && p.t <= landedT);
-    // Too few frames to judge a curve (a slow phone, or a quick hop): only ask that the
-    // highest point came somewhere in the middle, and give the benefit of the doubt.
-    if (pts.length < 6) {
-      if (pts.length < 3) return true;
-      const top = pts.reduce((best, p, i) => (p.y < pts[best].y ? i : best), 0);
-      if (top === 0 || top === pts.length - 1) return false;
-      // ...and that it rose roughly as far as that much time in the air allows (g·T²/8).
-      const T = (pts[pts.length - 1].t - pts[0].t) / 1000;
-      const rose = (pts[0].y + pts[pts.length - 1].y) / 2 - pts[top].y;
-      const allowed = ((G * T * T) / 8) * this.cal.scale;
-      return rose > 0.25 * allowed && rose < 2 * allowed;
-    }
-    // Least-squares fit of y = a·s² + b·s + c, with s in seconds from the middle of the flight.
-    const t0 = pts[0].t;
-    const span = (pts[pts.length - 1].t - t0) / 1000;
-    const data = pts.map((p) => ({ s: (p.t - t0) / 1000 - span / 2, y: p.y }));
-    const sum = (f) => data.reduce((acc, d) => acc + f(d), 0);
-    const n = data.length;
-    const s1 = sum((d) => d.s), s2 = sum((d) => d.s ** 2), s3 = sum((d) => d.s ** 3), s4 = sum((d) => d.s ** 4);
-    const y0 = sum((d) => d.y), y1 = sum((d) => d.y * d.s), y2 = sum((d) => d.y * d.s ** 2);
-    // Solve the 3×3 normal equations by Cramer's rule.
-    const det = (m) =>
-      m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
-    const D = det([s4, s3, s2, s3, s2, s1, s2, s1, n]);
-    if (!D) return false;
-    const a = det([y2, s3, s2, y1, s2, s1, y0, s1, n]) / D;
-    const b = det([s4, y2, s2, s3, y1, s1, s2, y0, n]) / D;
-    const c = det([s4, s3, y2, s3, s2, y1, s2, s1, y0]) / D;
+    const fit = (this.lastFit = this.#fitArc(landedT)); // kept for diagnostics (scripts/replay.mjs)
+    return fit.ok;
+  }
 
-    // The bands below are deliberately loose. Real footage is noisy, the hips are not the
-    // centre of mass, and the scale may be an estimate; the aim is only to throw out what
-    // plainly is not a jump.
-    // 1. Curvature is in the region of gravity (y points down, so free fall has a = +g/2 in pixels).
-    const gravity = (G / 2) * this.cal.scale;
-    if (!(a > 0.25 * gravity && a < 2 * gravity)) return false;
-    // 2. The path really is that parabola, not a step or a wobble that averages out to one.
-    const mean = y0 / n;
-    const total = sum((d) => (d.y - mean) ** 2);
-    const residual = sum((d) => (d.y - (a * d.s * d.s + b * d.s + c)) ** 2);
-    if (!(total > 0) || 1 - residual / total < 0.6) return false;
-    // 3. It peaks around the middle: up for about as long as down.
-    const apex = -b / (2 * a) / span; // -0.5 at take-off, +0.5 at landing
-    return Math.abs(apex) < 0.4;
+  #fitArc(landedT) {
+    const pts = this.air.path.filter((p) => p.t >= this.air.tOff && p.t <= landedT);
+    const n = pts.length;
+    if (n < 3) return { n, ok: true }; // nothing to judge: give the benefit of the doubt
+    const t0 = pts[0].t;
+    const span = (pts[n - 1].t - t0) / 1000;
+
+    // How far the hips rose above the line joining take-off and landing, against how far
+    // that much time in the air allows (g·T²/8). Works with any number of frames.
+    const top = pts.reduce((best, p, i) => (p.y < pts[best].y ? i : best), 0);
+    const chordAtTop = pts[0].y + ((pts[n - 1].y - pts[0].y) * (pts[top].t - t0)) / (span * 1000);
+    const rise = (chordAtTop - pts[top].y) / (((G * span * span) / 8) * this.cal.scale);
+    const peakAt = (pts[top].t - t0) / (span * 1000); // 0 at take-off, 1 at landing
+
+    // Least-squares fit of y = a·s² + b·s + c, with s in seconds from the middle of the flight.
+    let curvature = null;
+    let r2 = null;
+    if (n >= FIT_MIN_POINTS) {
+      const data = pts.map((p) => ({ s: (p.t - t0) / 1000 - span / 2, y: p.y }));
+      const sum = (f) => data.reduce((acc, d) => acc + f(d), 0);
+      const s1 = sum((d) => d.s), s2 = sum((d) => d.s ** 2), s3 = sum((d) => d.s ** 3), s4 = sum((d) => d.s ** 4);
+      const y0 = sum((d) => d.y), y1 = sum((d) => d.y * d.s), y2 = sum((d) => d.y * d.s ** 2);
+      // Solve the 3×3 normal equations by Cramer's rule.
+      const det = (m) =>
+        m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+      const D = det([s4, s3, s2, s3, s2, s1, s2, s1, n]);
+      if (D) {
+        const a = det([y2, s3, s2, y1, s2, s1, y0, s1, n]) / D;
+        const b = det([s4, y2, s2, s3, y1, s1, s2, y0, n]) / D;
+        const c = det([s4, s3, y2, s3, s2, y1, s2, s1, y0]) / D;
+        // y points down, so free fall has a = +g/2 in pixels.
+        curvature = a / ((G / 2) * this.cal.scale);
+        const mean = y0 / n;
+        const total = sum((d) => (d.y - mean) ** 2);
+        const residual = sum((d) => (d.y - (a * d.s * d.s + b * d.s + c)) ** 2);
+        r2 = total > 0 ? 1 - residual / total : 0;
+      }
+    }
+
+    const ok =
+      rise > FIT.rise[0] && rise < FIT.rise[1] &&
+      peakAt > FIT.peakAt[0] && peakAt < FIT.peakAt[1] &&
+      (curvature == null || (curvature > FIT.curvature[0] && curvature < FIT.curvature[1] && r2 >= FIT.r2));
+    return { n, rise, peakAt, curvature, r2, ok };
   }
 
   /**

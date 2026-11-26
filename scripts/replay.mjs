@@ -41,6 +41,11 @@ for (const f of rec.frames) {
       : r.timeMs != null ? `${(r.timeMs / 1000).toFixed(2)} s over ${r.distanceM.toFixed(2)} m, avg ${r.avgMps.toFixed(2)} m/s, top ${r.topMps.toFixed(2)} m/s`
       : `${r.distanceM.toFixed(2)} m`;
     console.log(`${String(f.t).padStart(6)} ms  EVENT ${out.event} ${detail}`);
+    if ((out.event === 'result' || out.event === 'rejected') && tracker.lastFit) {
+      const fmt = (v) => (v == null ? '-' : v.toFixed(2));
+      const fit = tracker.lastFit;
+      console.log(`           arc check: ${fit.n} frames, rise ${fmt(fit.rise)}x, peak at ${fmt(fit.peakAt)}, curvature ${fmt(fit.curvature)}x, fit ${fmt(fit.r2)} -> ${fit.ok ? 'jump' : 'not a jump'}`);
+    }
   }
   if (args.includes('--verbose') && px) {
     const foot = Math.max(px[29].y, px[30].y, px[31].y, px[32].y);
