@@ -187,7 +187,11 @@ export class JumpTracker {
     if (flightMs < MIN_FLIGHT_MS) return this.#endAir();
     // A bumped or hand-held phone also makes the body leap up the picture and come back.
     // Only something actually falling under gravity counts as a jump.
-    if (!this.#fallsLikeAJump(air.touch.landedAt)) return this.#endAir();
+    if (!this.#fallsLikeAJump(air.touch.landedAt)) {
+      // Say so, rather than silently showing nothing: the person may well have jumped.
+      this.#endAir();
+      return { phase: this.phase, event: 'rejected', flightMs };
+    }
 
     const dir = Math.sign(m.hipX - air.hipX0) || 1;
     const takeoffX = dir * Math.max(...air.takeoffFeetX.map((x) => dir * x));
@@ -230,7 +234,18 @@ export class JumpTracker {
    */
   #fallsLikeAJump(landedT) {
     const pts = this.air.path.filter((p) => p.t >= this.air.tOff && p.t <= landedT);
-    if (pts.length < 4) return false;
+    // Too few frames to judge a curve (a slow phone, or a quick hop): only ask that the
+    // highest point came somewhere in the middle, and give the benefit of the doubt.
+    if (pts.length < 6) {
+      if (pts.length < 3) return true;
+      const top = pts.reduce((best, p, i) => (p.y < pts[best].y ? i : best), 0);
+      if (top === 0 || top === pts.length - 1) return false;
+      // ...and that it rose roughly as far as that much time in the air allows (g·T²/8).
+      const T = (pts[pts.length - 1].t - pts[0].t) / 1000;
+      const rose = (pts[0].y + pts[pts.length - 1].y) / 2 - pts[top].y;
+      const allowed = ((G * T * T) / 8) * this.cal.scale;
+      return rose > 0.25 * allowed && rose < 2 * allowed;
+    }
     // Least-squares fit of y = a·s² + b·s + c, with s in seconds from the middle of the flight.
     const t0 = pts[0].t;
     const span = (pts[pts.length - 1].t - t0) / 1000;
@@ -248,17 +263,20 @@ export class JumpTracker {
     const b = det([s4, y2, s2, s3, y1, s1, s2, y0, n]) / D;
     const c = det([s4, s3, y2, s3, s2, y1, s2, s1, y0]) / D;
 
-    // 1. Curvature matches gravity (y points down, so free fall has a = +g/2 in pixels).
+    // The bands below are deliberately loose. Real footage is noisy, the hips are not the
+    // centre of mass, and the scale may be an estimate; the aim is only to throw out what
+    // plainly is not a jump.
+    // 1. Curvature is in the region of gravity (y points down, so free fall has a = +g/2 in pixels).
     const gravity = (G / 2) * this.cal.scale;
-    if (!(a > 0.4 * gravity && a < 2.2 * gravity)) return false;
+    if (!(a > 0.25 * gravity && a < 2 * gravity)) return false;
     // 2. The path really is that parabola, not a step or a wobble that averages out to one.
     const mean = y0 / n;
     const total = sum((d) => (d.y - mean) ** 2);
     const residual = sum((d) => (d.y - (a * d.s * d.s + b * d.s + c)) ** 2);
-    if (!(total > 0) || 1 - residual / total < 0.85) return false;
+    if (!(total > 0) || 1 - residual / total < 0.6) return false;
     // 3. It peaks around the middle: up for about as long as down.
     const apex = -b / (2 * a) / span; // -0.5 at take-off, +0.5 at landing
-    return Math.abs(apex) < 0.3;
+    return Math.abs(apex) < 0.4;
   }
 
   /**

@@ -533,8 +533,10 @@ function drawDistanceMarks(mx, unit) {
 // cannot tell apart from the athlete moving. Optional: without it the measuring still
 // works, relying on the trackers' own checks.
 const phoneMotion = { listening: false, asked: false, movedAt: -Infinity };
-const PHONE_MOVING_DEG_PER_S = 8; // well above a steady hand's tremor, well below a real knock or pan
-const PHONE_SETTLE_MS = 400;
+// Only a real knock, swing or pan. A phone held in the hand trembles at up to ~10°/s, and
+// pausing for that would stop a hand-held phone from ever measuring anything.
+const PHONE_MOVING_DEG_PER_S = 25;
+const PHONE_SETTLE_MS = 300;
 
 function watchPhoneMotion() {
   if (typeof DeviceMotionEvent === 'undefined') return;
@@ -634,6 +636,11 @@ function onJumpUpdate({ phase, event, result }) {
   if (event === 'marked') say('Marked');
   // The last result stays up until the next one replaces it (a stray take-off must not wipe it).
   if (event === 'start') state.lastJump = null;
+  if (event === 'rejected') {
+    // Something left the floor and came back, but not the way a jump does. Say so, so a
+    // jump that was wrongly thrown out is visible rather than a mystery.
+    state.jumpNote = { text: 'Last movement was not counted — it did not look like a jump', until: performance.now() + 4000 };
+  }
   if (event === 'result' && mode === 'sprint') {
     const { timeMs, distanceM, avgMps, topMps, approximate } = result;
     saveResult({ at, mode, timeMs: Math.round(timeMs), distanceM, avgMps, topMps, approximate });
@@ -703,6 +710,7 @@ function renderJumpPanel() {
     details.push(`best ${mode === 'sprint' ? formatSpeed(best.avgMps, settings.units) : formatJump(best)}`);
   }
   if (!settings.heightCm) details.push('estimate — enter your height for accuracy');
+  if (state.jumpNote && performance.now() < state.jumpNote.until) details.unshift(state.jumpNote.text);
   el.jumpDetail.textContent = details.join(' · ');
 }
 
@@ -864,6 +872,11 @@ function startRecording() {
     model: `pose_landmarker_${settings.model}`,
     source: state.source.kind,
     handsTracked: settings.hands,
+    // Enough to replay the recording through the measuring code later (scripts/replay.mjs).
+    frame: { width: el.view.width, height: el.view.height },
+    measuring: settings.jumpMode,
+    heightCm: settings.heightCm,
+    sprintM: settings.sprintM,
   });
   el.recTime.textContent = '● 0:00';
   syncUi();

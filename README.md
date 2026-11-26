@@ -95,6 +95,16 @@ The phone has to stay put while measuring. If it is moved or knocked, the app sa
 motion sensor for this — an iPhone asks permission the first time). As a second line of
 defence, something only counts as a jump if the hips trace the arc gravity would give.
 
+If a jump is detected but thrown out, the panel says "Last movement was not counted"
+for a few seconds. To find out why a real jump was missed, tap **Record**, do the
+jump, stop, download the JSON, and replay it:
+
+```sh
+node scripts/replay.mjs recording.json --verbose
+```
+
+That prints what the measuring code saw frame by frame and each decision it made.
+
 For a long jump with a run-up, stand still at the take-off spot first, then walk back
 and run; the floor line and scale are kept until you next stand still.
 
